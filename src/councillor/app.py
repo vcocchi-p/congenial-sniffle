@@ -30,21 +30,32 @@ st.caption("Voter sentiment across council meetings and agenda items.")
 st.markdown("---")
 
 # ---------------------------------------------------------------------------
+# Sidebar — demo toggle + meeting selector
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    use_demo = st.toggle("🎭 Demo data", value=False, help="Switch between live and demo data")
+    if use_demo:
+        st.caption("Showing 10k simulated voters — Westminster Council meeting March 2026.")
+    else:
+        st.caption("Showing live voter submissions.")
+    st.markdown("---")
+
+# ---------------------------------------------------------------------------
 # Load data
 # ---------------------------------------------------------------------------
-meetings = get_meetings_with_votes()
+meetings = get_meetings_with_votes(use_demo=use_demo)
 
 if not meetings:
-    st.info("No votes have been submitted yet. Share the voter app and ask people to vote!")
+    if use_demo:
+        st.warning("Demo data not seeded yet. Run: `python -m src.voter.seed`")
+    else:
+        st.info("No votes have been submitted yet. Share the voter app and ask people to vote!")
     st.stop()
 
-# ---------------------------------------------------------------------------
-# Meeting selector (sidebar)
-# ---------------------------------------------------------------------------
 with st.sidebar:
     st.header("📅 Select Meeting")
     meeting_labels = {
-        m["meeting_id"]: f"Meeting {m['meeting_id']} — {m['unique_voters']} voters"
+        m["meeting_id"]: f"{m['meeting_id']} — {m['unique_voters']:,} voters"
         for m in meetings
     }
     selected_id = st.radio(
@@ -60,7 +71,7 @@ with st.sidebar:
 # Meeting-level headline metrics
 # ---------------------------------------------------------------------------
 selected = next(m for m in meetings if m["meeting_id"] == selected_id)
-items = get_item_tallies_for_meeting(selected_id)
+items = get_item_tallies_for_meeting(selected_id, use_demo=use_demo)
 
 col1, col2, col3 = st.columns(3)
 col1.metric("👥 Unique Voters", selected["unique_voters"])

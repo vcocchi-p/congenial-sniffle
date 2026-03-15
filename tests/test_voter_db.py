@@ -10,7 +10,7 @@ import pytest
 
 import src.voter.db as db_module
 from src.voter.db import (
-    get_all_tallies,
+    get_item_tallies_for_meeting,
     get_user_votes,
     get_vote_tallies,
     init_db,
@@ -104,19 +104,29 @@ class TestGetVoteTallies:
         assert get_vote_tallies("m1-1")["abstain"] == 1
 
 
-class TestGetAllTallies:
-    def test_returns_all_items(self):
+class TestGetItemTalliesForMeeting:
+    def test_returns_items_for_meeting(self):
         register_user("alice")
         submit_votes("alice", {
             "m1-1": {"vote": "for", "title": "Motion A"},
             "m1-2": {"vote": "against", "title": "Motion B"},
         })
-        tallies = get_all_tallies()
-        assert "m1-1" in tallies
-        assert "m1-2" in tallies
+        items = get_item_tallies_for_meeting("m1")
+        keys = [i["item_key"] for i in items]
+        assert "m1-1" in keys
+        assert "m1-2" in keys
 
-    def test_empty_when_no_votes(self):
-        assert get_all_tallies() == {}
+    def test_empty_for_unknown_meeting(self):
+        assert get_item_tallies_for_meeting("unknown") == []
+
+    def test_sorted_by_total_votes_descending(self):
+        for name in ["alice", "bob", "carol"]:
+            register_user(name)
+        submit_votes("alice", {"m1-1": {"vote": "for", "title": "A"}})
+        submit_votes("bob", {"m1-1": {"vote": "for", "title": "A"}})
+        submit_votes("carol", {"m1-2": {"vote": "against", "title": "B"}})
+        items = get_item_tallies_for_meeting("m1")
+        assert items[0]["item_key"] == "m1-1"  # 2 votes > 1 vote
 
 
 class TestGetUserVotes:
