@@ -22,6 +22,7 @@ from src.models.documents import (
     AgendaItem,
     AgentEvent,
     Committee,
+    Councillor,
     CouncilDocument,
     DocumentType,
     Meeting,
@@ -77,23 +78,47 @@ def parse_committees(html: str) -> list[Committee]:
 # ---------------------------------------------------------------------------
 
 def parse_meetings(html: str, committee_id: int, committee_name: str) -> list[Meeting]:
-    """Parse a committee's meeting list page (ieListMeetings.aspx)."""
+    """Parse a committee's meeting list page (ieListMeetings.aspx).
+
+    Determines whether each meeting is upcoming by parsing the date text
+    and comparing to today's date.
+    """
     soup = BeautifulSoup(html, "html.parser")
+    today = datetime.now(timezone.utc).date()
     meetings = []
     for link in soup.select("a[href*='ieListDocuments']"):
         href = link.get("href", "")
         mid_match = re.search(r"MId=(\d+)", href)
         if mid_match:
+            date_text = link.get_text(strip=True)
+            is_upcoming = _is_upcoming(date_text, today)
             meetings.append(
                 Meeting(
                     committee_id=committee_id,
                     committee_name=committee_name,
                     meeting_id=int(mid_match.group(1)),
-                    date=link.get_text(strip=True),
+                    date=date_text,
                     url=_absolute(href),
+                    is_upcoming=is_upcoming,
                 )
             )
     return meetings
+
+
+def _is_upcoming(date_text: str, today) -> bool:
+    """Check if a meeting date string is in the future.
+
+    Date text looks like "16 Mar 2026 6.30 pm" or "Constitution".
+    """
+    # Try to parse the date portion (e.g. "16 Mar 2026")
+    match = re.match(r"(\d{1,2}\s+\w+\s+\d{4})", date_text)
+    if not match:
+        return False
+    try:
+        meeting_date = datetime.strptime(match.group(1), "%d %b %Y").date()
+        return meeting_date >= today
+    except ValueError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -128,34 +153,132 @@ def parse_meeting_documents(html: str, meeting_id: int) -> list[MeetingDocument]
 
 
 def parse_agenda_items(html: str, meeting_id: int) -> list[AgendaItem]:
-    """Parse agenda items from a meeting detail page."""
+    """Parse agenda items with full inline content from a meeting detail page.
+
+    Each agenda item is a <tr> containing:
+      - p.mgAiTitleTxt            → item number + title
+      - div.mgWordPara (first)    → description of the item
+      - p.mgSubItemTitleTxt "Decision:" + div.mgWordPara → decision text
+      - p.mgSubItemTitleTxt "Minutes:"  + div.mgWordPara → minutes text
+    """
     soup = BeautifulSoup(html, "html.parser")
     items = []
 
-    # Agenda items are typically in rows with class containing "mgItemTitle" or
-    # in links to ieDecisionDetails
-    for link in soup.select("a[href*='ieDecisionDetails']"):
-        href = link.get("href", "")
-        text = link.get_text(strip=True)
-        if text:
-            # Try to extract item number from preceding text
-            parent = link.find_parent("td") or link.find_parent("div")
-            item_num = ""
-            if parent:
-                full_text = parent.get_text(strip=True)
-                num_match = re.match(r"^(\d+\.?)", full_text)
-                if num_match:
-                    item_num = num_match.group(1)
+    for row in soup.find_all("tr"):
+        # Each agenda item row has a cell with class mgItemNumberCell
+        num_cell = row.find("td", class_="mgItemNumberCell")
+        if not num_cell:
+            continue
 
+        item_number = num_cell.get_text(strip=True).rstrip(".")
+
+        # The second cell has the title + all content
+        cells = row.find_all("td")
+        if len(cells) < 2:
+            continue
+        content_cell = cells[1]
+
+        # Title from first p.mgAiTitleTxt
+        title_tag = content_cell.find("p", class_="mgAiTitleTxt")
+        title = title_tag.get_text(strip=True) if title_tag else ""
+        # Strip trailing "PDF xxx KB" from title
+        title = re.sub(r"PDF\s+[\d.]+ [KMG]B\s*$", "", title).strip()
+
+        # Decision URL if present
+        decision_url = None
+        for link in content_cell.select("a[href*='ieDecisionDetails']"):
+            decision_url = _absolute(link.get("href", ""))
+            break
+
+        # Walk through mgSubItemTitleTxt headers to find Decision/Minutes sections
+        description = ""
+        decision_text = ""
+        minutes_text = ""
+
+        # First div.mgWordPara before any mgSubItemTitleTxt is the description
+        sub_headers = content_cell.find_all("p", class_="mgSubItemTitleTxt")
+        first_desc_div = content_cell.find("div", class_="mgWordPara")
+        if first_desc_div:
+            # Only use as description if it comes before the first sub-header
+            if not sub_headers or first_desc_div.sourceline < sub_headers[0].sourceline:
+                description = first_desc_div.get_text(separator="\n", strip=True)
+
+        for header in sub_headers:
+            header_text = header.get_text(strip=True).lower().rstrip(":")
+            # The content is in the next div.mgWordPara sibling
+            next_div = header.find_next_sibling("div", class_="mgWordPara")
+            if not next_div:
+                continue
+            content = next_div.get_text(separator="\n", strip=True)
+
+            if header_text == "decision":
+                decision_text = content
+            elif header_text == "minutes":
+                minutes_text = content
+
+        if title:
             items.append(
                 AgendaItem(
                     meeting_id=meeting_id,
-                    item_number=item_num,
-                    title=text,
-                    decision_url=_absolute(href),
+                    item_number=item_number,
+                    title=title,
+                    description=description,
+                    decision_text=decision_text,
+                    minutes_text=minutes_text,
+                    decision_url=decision_url,
                 )
             )
+
     return items
+
+
+# ---------------------------------------------------------------------------
+# Parsing: Attendance & councillors
+# ---------------------------------------------------------------------------
+
+def parse_attendance(html: str) -> list[Councillor]:
+    """Parse the meeting attendance page (mgMeetingAttendance.aspx).
+
+    Returns a list of councillors who attended the meeting.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    councillors = []
+    for row in soup.find_all("tr"):
+        cells = row.find_all("td")
+        if len(cells) < 3:
+            continue
+        name_cell = cells[0]
+        role = cells[1].get_text(strip=True)
+        attendance = cells[2].get_text(strip=True)
+        if attendance.lower() != "present":
+            continue
+        link = name_cell.find("a")
+        name = name_cell.get_text(strip=True)
+        profile_url = None
+        if link and link.get("href"):
+            profile_url = _absolute(link["href"])
+        if name:
+            councillors.append(
+                Councillor(name=name, role=role, profile_url=profile_url)
+            )
+    return councillors
+
+
+def extract_councillors_from_text(text: str) -> list[str]:
+    """Extract councillor names from minutes/decision text.
+
+    Looks for the pattern "Councillor Surname" or "Councillors X, Y and Z".
+    """
+    # Match "Councillor(s) Name" patterns
+    matches = re.findall(r"Councillor\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", text)
+    # Deduplicate while preserving order
+    seen = set()
+    result = []
+    for name in matches:
+        if name not in seen:
+            seen.add(name)
+            result.append(name)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +339,13 @@ async def fetch_meeting_detail(meeting: Meeting) -> tuple[list[MeetingDocument],
     docs = parse_meeting_documents(html, meeting.meeting_id)
     items = parse_agenda_items(html, meeting.meeting_id)
     return docs, items
+
+
+async def fetch_attendance(meeting: Meeting) -> list[Councillor]:
+    """Fetch and parse the attendance list for a meeting."""
+    url = f"{WESTMINSTER_BASE}/mgMeetingAttendance.aspx?ID={meeting.meeting_id}"
+    html = await fetch_page(url)
+    return parse_attendance(html)
 
 
 async def fetch_decision(url: str) -> dict:

@@ -21,6 +21,14 @@ class Committee(BaseModel):
     url: str
 
 
+class Councillor(BaseModel):
+    """A Westminster councillor."""
+
+    name: str
+    role: str = ""  # e.g. "Chair", "Cabinet Member for Finance"
+    profile_url: str | None = None
+
+
 class Meeting(BaseModel):
     """A single committee meeting."""
 
@@ -29,6 +37,8 @@ class Meeting(BaseModel):
     meeting_id: int  # MId parameter on the site
     date: str  # e.g. "31 Mar 2025 6.30 pm"
     url: str
+    is_upcoming: bool = False
+    attendees: list[Councillor] = []
 
 
 class MeetingDocument(BaseModel):
@@ -41,13 +51,15 @@ class MeetingDocument(BaseModel):
 
 
 class AgendaItem(BaseModel):
-    """A single agenda item from a meeting."""
+    """A single agenda item from a meeting, with full inline content."""
 
     meeting_id: int
     item_number: str
     title: str
+    description: str = ""
+    decision_text: str = ""
+    minutes_text: str = ""
     decision_url: str | None = None
-    decision_summary: str | None = None
 
 
 class CouncilDocument(BaseModel):
