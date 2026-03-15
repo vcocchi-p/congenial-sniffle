@@ -1,0 +1,57 @@
+90 seconds total including the demo — that's tight. Every sentence needs to earn its place. Here's the script, with timing markers and stage directions for the demo transitions.
+
+---
+
+**QUORUM — 90-Second Hackathon Script**
+
+---
+
+**[0:00–0:20] THE PROBLEM**
+
+"Quick show of hands — who here knows what your local council is voting on this week?"
+
+*(pause, scan the room)*
+
+"Yeah, me neither. And that's the problem. Your council is making decisions that directly affect your rent, your roads, your parks — and the whole process is buried in jargon, scheduled at 3pm on a Thursday when you're at work, and basically designed to keep you out of the loop."
+
+**[0:20–0:30] THE OTHER SIDE**
+
+"But here's what's interesting — councillors hate this too. They're voting on what they *think* matters to you, with basically zero signal from the people they represent."
+
+**[0:30–0:45] ENTER QUORUM**
+
+"So we built Quorum. It pulls completely public data from Westminster Council — every upcoming motion, every vote — and uses an AI agent to explain to you in plain English what's being decided, why it matters to you, and the pros and cons. Then you vote. Takes 30 seconds."
+
+**[0:45–0:50] DEMO TRANSITION**
+
+"Let me show you. I want everyone to scan this QR code right now and sign up — you're going to vote live."
+
+*(show QR code, give people a few seconds)*
+
+**[0:50–1:10] LIVE DEMO**
+
+"So here you can see the upcoming motions — each one broken down by our AI with context, pros, and cons. I'll cast my vote... done. That took me 30 seconds instead of 10 minutes reading council documents."
+
+*(switch view)*
+
+"Now here's the councillor's view. We can see votes coming in live..."
+
+*(watch for audience votes appearing)*
+
+"...and just like that, a councillor now knows exactly how their constituents feel before they walk into that meeting."
+
+**[1:10–1:20] WHATSAPP MOMENT**
+
+"Oh — and a new meeting just came up. I'm getting notified on WhatsApp right now, thanks to our sentinel agent that monitors the council calendar."
+
+*(show phone/notification if possible)*
+
+**[1:20–1:30] CLOSE**
+
+"Quorum. Democracy shouldn't require a day off. Thank you."
+
+---
+
+**Delivery notes:**
+
+The show-of-hands opener is your strongest weapon — it makes the problem felt, not just heard. Don't rush past the pause. On the demo, narrate what you're doing as you do it rather than waiting for things to load. If audience votes don't show up in time, have a backup line ready like "and as those come in, councillors see the sentiment shift in real time." The WhatsApp notification is your "wow" closer — if you can time it to actually ping your phone audibly, even better.

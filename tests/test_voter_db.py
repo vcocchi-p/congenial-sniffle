@@ -2,15 +2,24 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 import src.retrieval.db as retrieval_db
 import src.voter.db as db_module
+from src.models.documents import AgendaItem, Committee, Meeting, RetrievalBundle
+from src.retrieval.db import (
+    init_retrieval_db,
+    record_retrieval_run_result,
+    record_retrieval_run_started,
+)
 from src.voter.db import (
+    get_agenda_items,
     get_item_tallies_for_meeting,
     get_latest_run_id,
+    get_meetings,
     get_user_votes,
     get_vote_tallies,
     init_db,
@@ -27,7 +36,41 @@ def tmp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(db_module, "DB_PATH", test_db)
     monkeypatch.setattr(retrieval_db, "DB_PATH", test_db)
     init_db()
+    init_retrieval_db()
     return test_db
+
+
+def _sample_bundle() -> RetrievalBundle:
+    return RetrievalBundle(
+        source_url="https://committees.westminster.gov.uk/ieListMeetings.aspx?CId=130&Year=0",
+        committees=[
+            Committee(
+                id=130,
+                name="Cabinet",
+                url="https://committees.westminster.gov.uk/mgCommitteeDetails.aspx?ID=130",
+            )
+        ],
+        meetings=[
+            Meeting(
+                committee_id=130,
+                committee_name="Cabinet",
+                meeting_id=6718,
+                date="23 Feb 2026 6.30 pm",
+                url="https://committees.westminster.gov.uk/ieListDocuments.aspx?CId=130&MId=6718&Ver=4",
+                is_upcoming=False,
+            )
+        ],
+        agenda_items=[
+            AgendaItem(
+                meeting_id=6718,
+                item_number="4",
+                title="Budget",
+                description="Annual budget report",
+                decision_text="Approved budget",
+                minutes_text="Members discussed finances.",
+            )
+        ],
+    )
 
 
 class TestRegisterUser:
@@ -152,3 +195,50 @@ class TestGetUserVotes:
 class TestPipelineBackedContent:
     def test_fresh_database_returns_no_latest_run(self):
         assert get_latest_run_id() is None
+
+    def test_returns_latest_completed_run_id(self):
+        requested_at = datetime(2026, 3, 15, 16, 0, tzinfo=timezone.utc)
+        record_retrieval_run_started(
+            "run-001",
+            source_url=_sample_bundle().source_url,
+            trigger_type="manual",
+            requested_at=requested_at,
+        )
+        record_retrieval_run_result(
+            "run-001",
+            status="completed",
+            completed_at=requested_at,
+            latest_message="Completed",
+            documents_discovered=0,
+            documents_fetched=0,
+            bundle=_sample_bundle(),
+        )
+
+        assert get_latest_run_id() == "run-001"
+
+    def test_loads_meetings_and_agenda_items_from_current_retrieval_schema(self):
+        requested_at = datetime(2026, 3, 15, 16, 0, tzinfo=timezone.utc)
+        bundle = _sample_bundle()
+        record_retrieval_run_started(
+            "run-001",
+            source_url=bundle.source_url,
+            trigger_type="manual",
+            requested_at=requested_at,
+        )
+        record_retrieval_run_result(
+            "run-001",
+            status="completed",
+            completed_at=requested_at,
+            latest_message="Completed",
+            documents_discovered=0,
+            documents_fetched=0,
+            bundle=bundle,
+        )
+
+        meetings = get_meetings("run-001")
+        agenda_items = get_agenda_items("run-001")
+
+        assert meetings[0]["meeting_id"] == 6718
+        assert meetings[0]["committee_name"] == "Cabinet"
+        assert agenda_items[0]["meeting_id"] == 6718
+        assert agenda_items[0]["title"] == "Budget"

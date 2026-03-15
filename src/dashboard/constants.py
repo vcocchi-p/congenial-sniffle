@@ -24,6 +24,8 @@ DASHBOARD_PIPELINE_REQUESTS_KEY = "dashboard_pipeline_requests"
 DASHBOARD_REQUEST_SEQUENCE_KEY = "dashboard_request_sequence"
 
 DEFAULT_SOURCE_URL = "https://committees.westminster.gov.uk/ieDocHome.aspx?Categories="
+DEFAULT_ANALYSIS_MODE = "demo_upcoming"
+DEFAULT_ANALYSIS_MEETING_ID = 6718
 HISTORY_LIMIT = 5
 
 RETRIEVAL_METADATA_KEYS = (
