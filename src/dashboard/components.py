@@ -9,7 +9,14 @@ from urllib.parse import quote
 import pandas as pd
 import streamlit as st
 
-from src.dashboard.state import PipelineRequest, RetrievalTraceStep, RunSummary, StageSnapshot
+from src.dashboard.state import (
+    AnalysisOverview,
+    PipelineRequest,
+    RetrievalTraceStep,
+    RunSummary,
+    StageSnapshot,
+)
+from src.models.analysis import AgendaItemAnalysis
 from src.models.documents import AgentEvent, MeetingDocument, RetrievalBundle
 
 
@@ -27,11 +34,12 @@ def render_stage_cards(stages: list[StageSnapshot]) -> None:
 
 
 def render_global_metrics(metrics: dict[str, Any]) -> None:
-    columns = st.columns(6)
+    columns = st.columns(7)
     labels = (
         ("Active Run", format_status(str(metrics["active_run_status"]))),
         ("Docs Discovered", metrics["documents_discovered"]),
         ("Docs Fetched", metrics["documents_fetched"]),
+        ("Voter Briefs", metrics["summaries_generated"]),
         ("Manual Starts", metrics["manual_requests"]),
         ("Recent Errors", metrics["recent_errors"]),
         ("Last Run", format_timestamp(metrics["last_run_at"])),
@@ -241,6 +249,42 @@ def render_resource_bundle(bundle: RetrievalBundle | None) -> None:
             st.info("No decision details are stored for this run.")
 
 
+def render_analysis_overview(overview: AnalysisOverview | None) -> None:
+    if overview is None:
+        st.info("No persisted analysis output is available for this run yet.")
+        return
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Meeting", f"{overview.meeting_id}")
+    col2.metric("Committee", overview.committee_name)
+    col3.metric("Voter Briefs", overview.items_generated)
+    col4.metric("Notify Voters", overview.notify_voters)
+
+    st.caption(
+        f"Analysis Run `{overview.analysis_run_id}`"
+        f" | Mode {format_status(overview.analysis_mode)}"
+        f" | Status {format_status(overview.status)}"
+        f" | Meeting Date {overview.meeting_date}"
+        f" | Completed {format_timestamp(overview.completed_at)}"
+    )
+    st.markdown(f"**Why this meeting was selected:** {overview.selected_reason}")
+
+
+def render_analysis_items(items: list[AgendaItemAnalysis]) -> None:
+    if not items:
+        st.info("No analysed agenda items are stored for this run.")
+        return
+
+    st.dataframe(
+        pd.DataFrame(build_analysis_rows(items)),
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Source": st.column_config.LinkColumn("Source", display_text="Open"),
+        },
+    )
+
+
 def render_event_log(events: list[AgentEvent], *, title: str, empty_message: str) -> None:
     st.subheader(title)
     if not events:
@@ -318,6 +362,21 @@ def build_committee_rows(bundle: RetrievalBundle) -> list[dict[str, str | int]]:
             "URL": committee.url,
         }
         for committee in bundle.committees
+    ]
+
+
+def build_analysis_rows(items: list[AgendaItemAnalysis]) -> list[dict[str, str]]:
+    return [
+        {
+            "Item": item.item_number,
+            "Title": item.title,
+            "Summary": item.plain_summary,
+            "Why It Matters": item.why_it_matters,
+            "Watch": item.what_to_watch,
+            "Notify": "Yes" if item.notify_voters else "No",
+            "Source": item.source_urls[0] if item.source_urls else "",
+        }
+        for item in items
     ]
 
 

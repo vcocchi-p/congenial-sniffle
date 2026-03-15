@@ -2,8 +2,14 @@
 
 from datetime import datetime, timezone
 
-from src.dashboard.components import build_committee_rows, build_document_rows, build_trace_rows
+from src.dashboard.components import (
+    build_analysis_rows,
+    build_committee_rows,
+    build_document_rows,
+    build_trace_rows,
+)
 from src.dashboard.state import RetrievalTraceStep
+from src.models.analysis import AgendaItemAnalysis
 from src.models.documents import Committee, DocumentType, MeetingDocument, RetrievalBundle
 
 
@@ -100,5 +106,44 @@ def test_build_committee_rows_preserves_full_url():
             "ID": 130,
             "Name": "Cabinet",
             "URL": "https://committees.westminster.gov.uk/mgCommitteeDetails.aspx?ID=130",
+        }
+    ]
+
+
+def test_build_analysis_rows_preserves_primary_source_link():
+    items = [
+        AgendaItemAnalysis(
+            analysis_run_id="analysis-run-001",
+            retrieval_run_id="run-005",
+            meeting_id=6718,
+            item_key="6718-4",
+            item_number="4",
+            title="Budget",
+            plain_summary="Budget summary",
+            why_it_matters="Budget matters",
+            pros=["Protects services"],
+            cons=["Could raise costs"],
+            what_to_watch="Watch council tax",
+            councillors_involved=["Leader"],
+            source_urls=[
+                "https://committees.westminster.gov.uk/ieListDocuments.aspx?CId=130&MId=6718&Ver=4"
+            ],
+            notify_voters=True,
+            analysis_mode="demo_upcoming",
+            created_at=datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc),
+        )
+    ]
+
+    rows = build_analysis_rows(items)
+
+    assert rows == [
+        {
+            "Item": "4",
+            "Title": "Budget",
+            "Summary": "Budget summary",
+            "Why It Matters": "Budget matters",
+            "Watch": "Watch council tax",
+            "Notify": "Yes",
+            "Source": "https://committees.westminster.gov.uk/ieListDocuments.aspx?CId=130&MId=6718&Ver=4",
         }
     ]

@@ -10,6 +10,8 @@ from typing import Any, Awaitable, Callable, Iterable, MutableMapping, TypeVar
 from urllib.parse import urlparse
 
 from src.agents.pipeline import run_pipeline
+from src.analysis.agent import analyse_meeting
+from src.analysis.db import load_analysis_result_for_retrieval_run
 from src.dashboard.constants import (
     DASHBOARD_CURRENT_RUN_KEY,
     DASHBOARD_PIPELINE_REQUESTS_KEY,
@@ -21,6 +23,8 @@ from src.dashboard.constants import (
     DASHBOARD_RUN_SEQUENCE_KEY,
     DASHBOARD_SELECTED_RUN_KEY,
     DASHBOARD_SUMMARIES_GENERATED_KEY,
+    DEFAULT_ANALYSIS_MEETING_ID,
+    DEFAULT_ANALYSIS_MODE,
     HISTORY_LIMIT,
     PIPELINE_STAGES,
     PLACEHOLDER_STAGE_MESSAGE,
@@ -28,6 +32,7 @@ from src.dashboard.constants import (
     STAGE_LABELS,
 )
 from src.dashboard.simulation import next_run_id
+from src.models.analysis import AgendaItemAnalysis, MeetingAnalysisResult
 from src.models.documents import AgentEvent, MeetingDocument, RetrievalBundle
 from src.retrieval.db import (
     get_latest_run_sequence,
@@ -90,6 +95,22 @@ class PipelineRequest:
 
 SessionState = MutableMapping[str, Any]
 PipelineRunner = Callable[..., Awaitable[RetrievalBundle] | RetrievalBundle]
+AnalysisRunner = Callable[..., MeetingAnalysisResult]
+
+
+@dataclass(frozen=True)
+class AnalysisOverview:
+    analysis_run_id: str
+    retrieval_run_id: str
+    meeting_id: int
+    committee_name: str
+    meeting_date: str
+    analysis_mode: str
+    status: str
+    items_generated: int
+    notify_voters: int
+    selected_reason: str
+    completed_at: datetime | None
 
 
 def initialize_state(state: SessionState) -> None:
@@ -151,6 +172,36 @@ def load_run_bundle(state: SessionState, run_id: str | None) -> RetrievalBundle 
     return state.get(DASHBOARD_RUN_BUNDLES_KEY, {}).get(run_id)
 
 
+def load_analysis_result(run_id: str | None) -> MeetingAnalysisResult | None:
+    if run_id is None:
+        return None
+    return load_analysis_result_for_retrieval_run(run_id, analysis_mode=DEFAULT_ANALYSIS_MODE)
+
+
+def load_analysis_items(run_id: str | None) -> list[AgendaItemAnalysis]:
+    result = load_analysis_result(run_id)
+    return list(result.items) if result is not None else []
+
+
+def load_analysis_overview(run_id: str | None) -> AnalysisOverview | None:
+    result = load_analysis_result(run_id)
+    if result is None:
+        return None
+    return AnalysisOverview(
+        analysis_run_id=result.run.analysis_run_id,
+        retrieval_run_id=result.run.retrieval_run_id,
+        meeting_id=result.selection.meeting_id,
+        committee_name=result.selection.committee_name,
+        meeting_date=result.selection.meeting_date,
+        analysis_mode=result.selection.analysis_mode,
+        status=result.run.status,
+        items_generated=len(result.items),
+        notify_voters=sum(1 for item in result.items if item.notify_voters),
+        selected_reason=result.selection.reason_selected,
+        completed_at=result.run.completed_at,
+    )
+
+
 def load_resource_counts(state: SessionState, run_id: str | None) -> dict[str, int]:
     bundle = load_run_bundle(state, run_id)
     if bundle is None:
@@ -166,27 +217,24 @@ def load_resource_counts(state: SessionState, run_id: str | None) -> dict[str, i
 
 def load_stage_snapshots(state: SessionState) -> list[StageSnapshot]:
     current_run_id = get_current_run_id(state)
-    current_run_summary = get_run_summary(state, current_run_id)
     current_events = load_events(state, current_run_id) if current_run_id else []
-    latest_event = current_events[-1] if current_events else None
     active_request = get_active_request(state)
     recent_runs = load_recent_runs(state)
     latest_run = recent_runs[0] if recent_runs else None
+    latest_run_id = latest_run.run_id if latest_run is not None else None
+    latest_analysis = load_analysis_overview(latest_run_id)
 
     snapshots: list[StageSnapshot] = []
     for stage in PIPELINE_STAGES:
-        if stage == "retrieval" and current_run_summary is not None:
+        latest_stage_event = _latest_stage_event(current_events, stage)
+        if latest_stage_event is not None:
             snapshots.append(
                 StageSnapshot(
                     stage=stage,
                     label=STAGE_LABELS[stage],
-                    status=current_run_summary.status,
-                    message=current_run_summary.latest_message,
-                    last_updated=(
-                        latest_event.timestamp
-                        if latest_event
-                        else current_run_summary.completed_at
-                    ),
+                    status=map_event_type_to_status(latest_stage_event.event_type),
+                    message=latest_stage_event.message,
+                    last_updated=latest_stage_event.timestamp,
                 )
             )
             continue
@@ -198,6 +246,42 @@ def load_stage_snapshots(state: SessionState) -> list[StageSnapshot]:
                     status=active_request.status,
                     message=active_request.message,
                     last_updated=active_request.requested_at,
+                )
+            )
+            continue
+        if stage == "analysis" and latest_analysis is not None:
+            snapshots.append(
+                StageSnapshot(
+                    stage=stage,
+                    label=STAGE_LABELS[stage],
+                    status=latest_analysis.status,
+                    message=(
+                        f"Latest analysis for meeting {latest_analysis.meeting_id}: "
+                        f"{latest_analysis.items_generated} voter briefs generated."
+                    ),
+                    last_updated=latest_analysis.completed_at,
+                )
+            )
+            continue
+        if stage == "analysis" and current_run_id is not None:
+            snapshots.append(
+                StageSnapshot(
+                    stage=stage,
+                    label=STAGE_LABELS[stage],
+                    status="idle",
+                    message="Awaiting analysis start for this run.",
+                    last_updated=None,
+                )
+            )
+            continue
+        if stage == "analysis":
+            snapshots.append(
+                StageSnapshot(
+                    stage=stage,
+                    label=STAGE_LABELS[stage],
+                    status="idle",
+                    message="Analysis starts after retrieval completes.",
+                    last_updated=None,
                 )
             )
             continue
@@ -236,6 +320,7 @@ def load_stage_snapshots(state: SessionState) -> list[StageSnapshot]:
 def load_global_metrics(state: SessionState) -> dict[str, Any]:
     current_run_id = get_current_run_id(state)
     current_run = get_run_summary(state, current_run_id)
+    current_analysis = load_analysis_result(current_run_id)
     recent_runs = load_recent_runs(state)
     active_request = get_active_request(state)
     last_run_at = None
@@ -255,7 +340,11 @@ def load_global_metrics(state: SessionState) -> dict[str, Any]:
         "documents_discovered": current_run.documents_discovered if current_run is not None else 0,
         "documents_fetched": current_run.documents_fetched if current_run is not None else 0,
         "manual_requests": len(load_pipeline_requests(state)),
-        "summaries_generated": state.get(DASHBOARD_SUMMARIES_GENERATED_KEY, 0),
+        "summaries_generated": (
+            len(current_analysis.items)
+            if current_analysis is not None
+            else state.get(DASHBOARD_SUMMARIES_GENERATED_KEY, 0)
+        ),
         "recent_errors": sum(run.errors for run in recent_runs),
         "last_run_at": last_run_at,
     }
@@ -305,6 +394,7 @@ def start_retrieval_run(
     source_url: str,
     *,
     pipeline_runner: PipelineRunner = run_pipeline,
+    analysis_runner: AnalysisRunner = analyse_meeting,
     on_event: Callable[[AgentEvent], None] | None = None,
 ) -> PipelineRequest:
     initialize_state(state)
@@ -341,9 +431,10 @@ def start_retrieval_run(
         trigger_type="manual",
         requested_at=requested_at,
     )
+    analysis_started = False
 
     def capture(event: AgentEvent) -> None:
-        normalized_event = _normalize_retrieval_event(event, run_id, normalized_url)
+        normalized_event = _normalize_pipeline_event(event, run_id, normalized_url)
         state[DASHBOARD_RUN_EVENTS_KEY][run_id].append(normalized_event)
         record_retrieval_event(run_id, normalized_event)
         if on_event is not None:
@@ -376,6 +467,31 @@ def start_retrieval_run(
                 documents_fetched=summary.documents_fetched,
                 bundle=bundle,
             )
+        analysis_started = True
+        analysis_result = _run_analysis_sync(
+            analysis_runner,
+            run_id=run_id,
+            preferred_meeting_id=DEFAULT_ANALYSIS_MEETING_ID,
+            analysis_mode=DEFAULT_ANALYSIS_MODE,
+            on_event=capture,
+        )
+        state[DASHBOARD_SUMMARIES_GENERATED_KEY] = len(analysis_result.items)
+        final_summary = summarize_run(
+            run_id,
+            state[DASHBOARD_RUN_EVENTS_KEY][run_id],
+            state[DASHBOARD_RUN_DOCUMENTS_KEY][run_id],
+            bundle,
+        )
+        if final_summary is not None:
+            record_retrieval_run_result(
+                run_id,
+                status=final_summary.status,
+                completed_at=final_summary.completed_at,
+                latest_message=final_summary.latest_message,
+                documents_discovered=final_summary.documents_discovered,
+                documents_fetched=final_summary.documents_fetched,
+                bundle=bundle,
+            )
         request = PipelineRequest(
             request_id=request.request_id,
             run_id=run_id,
@@ -383,10 +499,21 @@ def start_retrieval_run(
             source_url=normalized_url,
             requested_at=requested_at,
             status="completed",
-            message="Retrieval run completed successfully.",
+            message="Retrieval and analysis completed successfully.",
         )
     except Exception as exc:
-        error_event = _build_dashboard_error_event(run_id, normalized_url, str(exc))
+        error_event = _build_dashboard_error_event(
+            run_id,
+            normalized_url,
+            str(exc),
+            stage="analysis" if analysis_started else "retrieval",
+            agent_name="analysis" if analysis_started else "retriever",
+            message=(
+                "Analysis run failed before completion"
+                if analysis_started
+                else "Retrieval run failed before completion"
+            ),
+        )
         state[DASHBOARD_RUN_EVENTS_KEY][run_id].append(error_event)
         record_retrieval_event(run_id, error_event)
         if on_event is not None:
@@ -407,7 +534,7 @@ def start_retrieval_run(
                 documents_discovered=summary.documents_discovered,
                 documents_fetched=summary.documents_fetched,
                 error_message=str(exc),
-                bundle=None,
+                bundle=state[DASHBOARD_RUN_BUNDLES_KEY][run_id],
             )
         request = PipelineRequest(
             request_id=request.request_id,
@@ -416,7 +543,7 @@ def start_retrieval_run(
             source_url=normalized_url,
             requested_at=requested_at,
             status="error",
-            message="Retrieval run failed.",
+            message=str(exc),
         )
 
     _replace_request(state, request)
@@ -483,7 +610,7 @@ def load_retrieval_overview(state: SessionState, run_id: str | None = None) -> d
 
     run_id = run_id or get_selected_run_id(state)
     summary = get_run_summary(state, run_id)
-    events = load_events(state, run_id)
+    events = load_stage_events(state, "retrieval", run_id)
     latest_error = next(
         (event.message for event in reversed(events) if event.event_type == "error"),
         None,
@@ -500,13 +627,15 @@ def load_retrieval_overview(state: SessionState, run_id: str | None = None) -> d
     return {
         "run_id": run_id,
         "status": (
-            summary.status
-            if summary is not None
+            map_event_type_to_status(latest_event.event_type)
+            if latest_event is not None
             else active_request.status if active_request else "idle"
         ),
         "current_step": current_step,
         "current_source_url": current_source_url,
-        "documents_discovered": summary.documents_discovered if summary is not None else 0,
+        "documents_discovered": (
+            summary.documents_discovered if summary is not None else 0
+        ),
         "documents_fetched": summary.documents_fetched if summary is not None else 0,
         "latest_error": latest_error,
         "summary": summary,
@@ -518,7 +647,7 @@ def load_retrieval_trace(
     state: SessionState,
     run_id: str | None = None,
 ) -> list[RetrievalTraceStep]:
-    events = load_events(state, run_id)
+    events = load_stage_events(state, "retrieval", run_id)
     trace: list[RetrievalTraceStep] = []
     for event in events:
         metadata = _event_metadata(event)
@@ -548,6 +677,18 @@ def map_event_type_to_status(event_type: str) -> str:
         "error": "error",
         "queued": "queued",
     }.get(event_type, "idle")
+
+
+def load_stage_events(
+    state: SessionState,
+    stage: str,
+    run_id: str | None = None,
+) -> list[AgentEvent]:
+    return [
+        event
+        for event in load_events(state, run_id)
+        if _event_stage(event) == stage
+    ]
 
 
 def _missing_state(state: SessionState) -> bool:
@@ -606,11 +747,15 @@ def _run_awaitable(awaitable: Awaitable[T]) -> T:
         finally:
             loop.close()
 
+def _run_analysis_sync(analysis_runner: AnalysisRunner, **kwargs: Any) -> MeetingAnalysisResult:
+    return analysis_runner(**kwargs)
 
-def _normalize_retrieval_event(event: AgentEvent, run_id: str, source_url: str) -> AgentEvent:
+
+def _normalize_pipeline_event(event: AgentEvent, run_id: str, source_url: str) -> AgentEvent:
     metadata = dict(event.metadata or {})
+    stage = str(metadata.get("stage") or _default_stage_for_agent(event.agent_name))
     metadata.setdefault("run_id", run_id)
-    metadata.setdefault("stage", "retrieval")
+    metadata.setdefault("stage", stage)
     metadata.setdefault("step_name", "progress")
     metadata.setdefault("source_url", source_url)
     metadata.setdefault("document_url", None)
@@ -622,21 +767,29 @@ def _normalize_retrieval_event(event: AgentEvent, run_id: str, source_url: str) 
     metadata.setdefault("trigger_type", "manual")
     return event.model_copy(
         update={
-            "agent_name": "retriever",
+            "agent_name": event.agent_name or _default_agent_for_stage(stage),
             "metadata": metadata,
         }
     )
 
 
-def _build_dashboard_error_event(run_id: str, source_url: str, detail: str) -> AgentEvent:
+def _build_dashboard_error_event(
+    run_id: str,
+    source_url: str,
+    detail: str,
+    *,
+    stage: str,
+    agent_name: str,
+    message: str,
+) -> AgentEvent:
     return AgentEvent(
-        agent_name="retriever",
+        agent_name=agent_name,
         event_type="error",
-        message="Retrieval run failed before completion",
+        message=message,
         timestamp=datetime.now(timezone.utc),
         metadata={
             "run_id": run_id,
-            "stage": "retrieval",
+            "stage": stage,
             "step_name": "error",
             "source_url": source_url,
             "document_url": None,
@@ -670,6 +823,11 @@ def _event_metadata(event: AgentEvent) -> dict[str, Any]:
     return dict(event.metadata or {})
 
 
+def _event_stage(event: AgentEvent) -> str:
+    metadata = _event_metadata(event)
+    return str(metadata.get("stage") or _default_stage_for_agent(event.agent_name))
+
+
 def _event_progress_total(event: AgentEvent) -> int:
     metadata = _event_metadata(event)
     value = metadata.get("progress_total")
@@ -684,6 +842,13 @@ def _latest_non_empty_metadata(events: Iterable[AgentEvent], key: str) -> str | 
     return None
 
 
+def _latest_stage_event(events: Iterable[AgentEvent], stage: str) -> AgentEvent | None:
+    for event in reversed(list(events)):
+        if _event_stage(event) == stage:
+            return event
+    return None
+
+
 def _optional_int(value: Any) -> int | None:
     if value is None:
         return None
@@ -694,3 +859,15 @@ def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _default_stage_for_agent(agent_name: str) -> str:
+    if agent_name == "analysis":
+        return "analysis"
+    return "retrieval"
+
+
+def _default_agent_for_stage(stage: str) -> str:
+    if stage == "analysis":
+        return "analysis"
+    return "retriever"

@@ -6,6 +6,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+import src.retrieval.db as retrieval_db
+
 DB_PATH = Path(__file__).resolve().parents[2] / "data" / "quorum.db"
 
 
@@ -31,7 +33,7 @@ def _users_table(demo: bool, populated: bool = False) -> str:
 
 
 def init_db():
-    """Create real and demo tables if they don't exist."""
+    """Create voter tables and ensure retrieval tables exist for empty DB startup."""
     conn = _connect()
     conn.executescript(
         """
@@ -85,6 +87,7 @@ def init_db():
         """
     )
     conn.close()
+    retrieval_db.init_retrieval_db()
 
 
 def register_user(username: str) -> str:
@@ -267,7 +270,7 @@ def get_latest_run_id() -> str | None:
 
 
 def get_meetings(run_id: str) -> list[dict]:
-    """Return all meetings for a pipeline run."""
+    """Return all meetings for a retrieval run from the persisted SQLite store."""
     conn = _connect()
     rows = conn.execute(
         """
@@ -275,6 +278,7 @@ def get_meetings(run_id: str) -> list[dict]:
         FROM retrieval_meeting_versions mv
         JOIN retrieval_run_meetings rm ON rm.meeting_version_id = mv.meeting_version_id
         WHERE rm.run_id = ?
+        ORDER BY rm.id ASC
         """,
         (run_id,),
     ).fetchall()
@@ -283,7 +287,7 @@ def get_meetings(run_id: str) -> list[dict]:
 
 
 def get_agenda_items(run_id: str) -> list[dict]:
-    """Return all agenda items for a pipeline run."""
+    """Return all agenda items for a retrieval run from the persisted SQLite store."""
     conn = _connect()
     rows = conn.execute(
         """
@@ -291,6 +295,7 @@ def get_agenda_items(run_id: str) -> list[dict]:
         FROM retrieval_agenda_item_versions av
         JOIN retrieval_run_agenda_items ra ON ra.agenda_item_version_id = av.agenda_item_version_id
         WHERE ra.run_id = ?
+        ORDER BY ra.id ASC
         """,
         (run_id,),
     ).fetchall()
