@@ -229,6 +229,41 @@ def get_user_votes(username: str) -> dict[str, str]:
     return {row["item_key"]: row["vote"] for row in rows}
 
 
+def get_latest_run_id() -> str | None:
+    """Return the run_id of the most recently completed pipeline run, or None."""
+    conn = _connect()
+    row = conn.execute(
+        """
+        SELECT run_id FROM retrieval_runs
+        WHERE status = 'completed'
+        ORDER BY completed_at DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    conn.close()
+    return row["run_id"] if row else None
+
+
+def get_meetings(run_id: str) -> list[dict]:
+    """Return all meetings for a pipeline run."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT * FROM retrieval_meetings WHERE run_id = ?", (run_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_agenda_items(run_id: str) -> list[dict]:
+    """Return all agenda items for a pipeline run."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT * FROM retrieval_agenda_items WHERE run_id = ?", (run_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 def get_recent_votes(limit: int = 30, use_demo: bool = False) -> list[dict]:
     """Return the most recent votes cast, newest first.
 

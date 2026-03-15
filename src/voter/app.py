@@ -7,17 +7,24 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import asyncio
-import io
+import io  # noqa: E402
 
-import qrcode
-import streamlit as st
-from dotenv import load_dotenv
+import qrcode  # noqa: E402
+import streamlit as st  # noqa: E402
+from dotenv import load_dotenv  # noqa: E402
 
-from src.agents.pipeline import run_pipeline  # noqa: E402
 from src.models.documents import AgendaItem, Meeting  # noqa: E402
 from src.parser.summariser import generate_pros_cons  # noqa: E402
-from src.voter.db import get_vote_tallies, init_db, register_user, submit_votes, user_exists
+from src.voter.db import (  # noqa: E402
+    get_agenda_items,
+    get_latest_run_id,
+    get_meetings,
+    get_vote_tallies,
+    init_db,
+    register_user,
+    submit_votes,
+    user_exists,
+)
 
 load_dotenv()
 init_db()
@@ -33,13 +40,9 @@ st.set_page_config(page_title="The Quorum — Have Your Say", page_icon="🗳️
 if "voter_username" not in st.session_state:
     st.session_state.voter_username = None
 if "votes" not in st.session_state:
-    st.session_state.votes = {}  # {item_key: {"vote": "for"|"against"|"abstain", "user": str}}
-if "pipeline_data" not in st.session_state:
-    st.session_state.pipeline_data = None
+    st.session_state.votes = {}  # {item_key: {"vote": "for"|"against"|"abstain", "title": str}}
 if "pros_cons_cache" not in st.session_state:
     st.session_state.pros_cons_cache = {}  # {item_key: pros_cons_dict}
-if "fetching" not in st.session_state:
-    st.session_state.fetching = False
 if "submitted_votes" not in st.session_state:
     st.session_state.submitted_votes = {}
 
@@ -47,18 +50,13 @@ if "submitted_votes" not in st.session_state:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _item_key(item: AgendaItem) -> str:
-    return f"{item.meeting_id}-{item.item_number}"
-
-
 def _get_public_url() -> str:
     """Get the public URL from ngrok, falling back to localhost."""
     try:
+        import json
         import urllib.request
 
         resp = urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=2)
-        import json
-
         data = json.loads(resp.read())
         for tunnel in data.get("tunnels", []):
             if tunnel.get("proto") == "https":
@@ -76,16 +74,48 @@ def _generate_qr(url: str) -> bytes:
     return buf.getvalue()
 
 
-def _fetch_pipeline_data():
-    """Run the retrieval pipeline and cache results."""
-    with st.spinner("Fetching latest council data..."):
-        loop = asyncio.new_event_loop()
-        try:
-            data = loop.run_until_complete(run_pipeline(max_meetings_per_committee=3))
-        finally:
-            loop.close()
-    st.session_state.pipeline_data = data
-    st.session_state.fetching = False
+def _load_council_data() -> tuple[list[Meeting], list[AgendaItem]] | None:
+    """Load meetings and agenda items from the latest completed pipeline run.
+
+    Returns (meetings, agenda_items) or None if no completed run exists.
+    """
+    run_id = get_latest_run_id()
+    if run_id is None:
+        return None
+
+    meeting_rows = get_meetings(run_id)
+    item_rows = get_agenda_items(run_id)
+
+    meetings = [
+        Meeting(
+            committee_id=r["committee_id"],
+            committee_name=r["committee_name"],
+            meeting_id=r["meeting_id"],
+            date=r["date"],
+            url=r["url"],
+            is_upcoming=bool(r["is_upcoming"]),
+        )
+        for r in meeting_rows
+    ]
+
+    agenda_items = [
+        AgendaItem(
+            meeting_id=r["meeting_id"],
+            item_number=r["item_number"],
+            title=r["title"],
+            description=r["description"],
+            decision_text=r["decision_text"],
+            minutes_text=r["minutes_text"],
+            decision_url=r.get("decision_url"),
+        )
+        for r in item_rows
+    ]
+
+    return meetings, agenda_items
+
+
+def _item_key(item: AgendaItem) -> str:
+    return f"{item.meeting_id}-{item.item_number}"
 
 
 def _get_pros_cons(item: AgendaItem, is_upcoming: bool) -> dict:
@@ -189,23 +219,19 @@ def show_content():
 
     st.markdown("---")
 
-    # Fetch data if not cached
-    if st.session_state.pipeline_data is None:
-        st.info("We need to fetch the latest council data. This may take a minute.")
-        if st.button("🔄 Load Council Decisions", type="primary"):
-            _fetch_pipeline_data()
-            st.rerun()
+    # Load council data from DB
+    result = _load_council_data()
+    if result is None:
+        st.info(
+            "No council data available yet. "
+            "The pipeline needs to run before decisions can be shown here."
+        )
         return
 
-    data = st.session_state.pipeline_data
-    meetings: list[Meeting] = data.get("meetings", [])
-    agenda_items: list[AgendaItem] = data.get("agenda_items", [])
+    meetings, agenda_items = result
 
     if not agenda_items:
-        st.warning("No agenda items found. Try refreshing the data.")
-        if st.button("🔄 Refresh"):
-            st.session_state.pipeline_data = None
-            st.rerun()
+        st.warning("No agenda items found in the latest pipeline run.")
         return
 
     # Build a meeting lookup
@@ -240,10 +266,6 @@ def show_content():
                 st.markdown(f"- **{title}**: {vote_label[vote_data['vote']]}")
 
         st.markdown("---")
-        if st.button("🔄 Refresh Data"):
-            st.session_state.pipeline_data = None
-            st.session_state.pros_cons_cache = {}
-            st.rerun()
 
     # Tabs for upcoming vs past
     tab_upcoming, tab_past = st.tabs(
@@ -332,17 +354,17 @@ def _render_items(
                     ):
                         st.session_state.votes[key] = {
                             "vote": "for",
-                            "user": st.session_state.voter_username,
                             "title": item.title,
                         }
                         st.rerun()
                 with col_against:
                     if st.button(
-                        "👎 Vote Against", key=f"against-{prefix}-{key}", use_container_width=True
+                        "👎 Vote Against",
+                        key=f"against-{prefix}-{key}",
+                        use_container_width=True,
                     ):
                         st.session_state.votes[key] = {
                             "vote": "against",
-                            "user": st.session_state.voter_username,
                             "title": item.title,
                         }
                         st.rerun()
@@ -352,7 +374,6 @@ def _render_items(
                     ):
                         st.session_state.votes[key] = {
                             "vote": "abstain",
-                            "user": st.session_state.voter_username,
                             "title": item.title,
                         }
                         st.rerun()
