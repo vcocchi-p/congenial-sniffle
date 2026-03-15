@@ -18,8 +18,16 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _votes_table(demo: bool) -> str:
+    return "demo_votes" if demo else "votes"
+
+
+def _users_table(demo: bool) -> str:
+    return "demo_users" if demo else "users"
+
+
 def init_db():
-    """Create tables if they don't exist."""
+    """Create real and demo tables if they don't exist."""
     conn = _connect()
     conn.executescript(
         """
@@ -36,6 +44,22 @@ def init_db():
             vote TEXT NOT NULL CHECK(vote IN ('for', 'against', 'abstain')),
             submitted_at TEXT NOT NULL,
             FOREIGN KEY (username) REFERENCES users(username),
+            UNIQUE(username, item_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS demo_users (
+            username TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS demo_votes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            item_key TEXT NOT NULL,
+            item_title TEXT NOT NULL,
+            vote TEXT NOT NULL CHECK(vote IN ('for', 'against', 'abstain')),
+            submitted_at TEXT NOT NULL,
+            FOREIGN KEY (username) REFERENCES demo_users(username),
             UNIQUE(username, item_key)
         );
         """
@@ -99,11 +123,12 @@ def submit_votes(username: str, votes: dict[str, dict]) -> int:
     return count
 
 
-def get_vote_tallies(item_key: str) -> dict[str, int]:
+def get_vote_tallies(item_key: str, use_demo: bool = False) -> dict[str, int]:
     """Get vote counts for an item. Returns {"for": N, "against": N, "abstain": N}."""
+    table = _votes_table(use_demo)
     conn = _connect()
     rows = conn.execute(
-        "SELECT vote, COUNT(*) as cnt FROM votes WHERE item_key = ? GROUP BY vote",
+        f"SELECT vote, COUNT(*) as cnt FROM {table} WHERE item_key = ? GROUP BY vote",
         (item_key,),
     ).fetchall()
     conn.close()
@@ -113,71 +138,42 @@ def get_vote_tallies(item_key: str) -> dict[str, int]:
     return tallies
 
 
-def get_all_tallies() -> dict[str, dict]:
-    """Get vote tallies for all items. Returns {item_key: {title, for, against, abstain}}."""
+def get_meetings_with_votes(use_demo: bool = False) -> list[dict]:
+    """Return all meeting IDs that have at least one vote, with engagement stats."""
+    table = _votes_table(use_demo)
     conn = _connect()
     rows = conn.execute(
-        """
-        SELECT item_key, item_title, vote, COUNT(*) as cnt
-        FROM votes GROUP BY item_key, vote
-        """
-    ).fetchall()
-    conn.close()
-    result: dict[str, dict] = {}
-    for row in rows:
-        key = row["item_key"]
-        if key not in result:
-            result[key] = {"title": row["item_title"], "for": 0, "against": 0, "abstain": 0}
-        result[key][row["vote"]] = row["cnt"]
-    return result
-
-
-def get_meetings_with_votes() -> list[dict]:
-    """Return all meeting IDs that have at least one vote, with engagement stats.
-
-    Returns list of dicts with keys: meeting_id, unique_voters, total_votes, items_voted_on.
-    item_key format is "{meeting_id}-{item_number}", so meeting_id is everything before the
-    last hyphen-separated number.
-    """
-    conn = _connect()
-    rows = conn.execute(
-        """
-        SELECT
-            item_key,
-            COUNT(DISTINCT username) as unique_voters,
-            COUNT(*) as total_votes
-        FROM votes
+        f"""
+        SELECT item_key, COUNT(DISTINCT username) as unique_voters, COUNT(*) as total_votes
+        FROM {table}
         GROUP BY item_key
         """
     ).fetchall()
-    conn.close()
 
-    # Group by meeting_id (prefix before last "-")
+    # Group by meeting_id (everything before the last "-N" suffix)
     meetings: dict[str, dict] = {}
     for row in rows:
         parts = row["item_key"].rsplit("-", 1)
         meeting_id = parts[0] if len(parts) == 2 else row["item_key"]
         if meeting_id not in meetings:
-            meetings[meeting_id] = {"meeting_id": meeting_id, "unique_voters": set(), "total_votes": 0, "items_voted_on": 0}  # noqa: E501
-        meetings[meeting_id]["unique_voters"].add(row["unique_voters"])
+            meetings[meeting_id] = {
+                "meeting_id": meeting_id,
+                "total_votes": 0,
+                "items_voted_on": 0,
+            }
         meetings[meeting_id]["total_votes"] += row["total_votes"]
         meetings[meeting_id]["items_voted_on"] += 1
 
-    # Resolve unique voters per meeting (union of voters across all items)
-    conn = _connect()
+    # Count unique voters per meeting across all its items
     result = []
     for meeting_id, data in meetings.items():
         voter_row = conn.execute(
-            """
-            SELECT COUNT(DISTINCT username) as unique_voters
-            FROM votes
-            WHERE item_key LIKE ?
-            """,
+            f"SELECT COUNT(DISTINCT username) as uv FROM {table} WHERE item_key LIKE ?",
             (f"{meeting_id}-%",),
         ).fetchone()
         result.append({
             "meeting_id": meeting_id,
-            "unique_voters": voter_row["unique_voters"] if voter_row else 0,
+            "unique_voters": voter_row["uv"] if voter_row else 0,
             "total_votes": data["total_votes"],
             "items_voted_on": data["items_voted_on"],
         })
@@ -185,17 +181,18 @@ def get_meetings_with_votes() -> list[dict]:
     return sorted(result, key=lambda x: x["total_votes"], reverse=True)
 
 
-def get_item_tallies_for_meeting(meeting_id: str) -> list[dict]:
+def get_item_tallies_for_meeting(meeting_id: str, use_demo: bool = False) -> list[dict]:
     """Return per-item vote tallies for a given meeting.
 
     Returns list of dicts with keys: item_key, item_title, for, against, abstain, total.
     Sorted by total votes descending.
     """
+    table = _votes_table(use_demo)
     conn = _connect()
     rows = conn.execute(
-        """
+        f"""
         SELECT item_key, item_title, vote, COUNT(*) as cnt
-        FROM votes
+        FROM {table}
         WHERE item_key LIKE ?
         GROUP BY item_key, vote
         """,
