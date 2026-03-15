@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
+import src.retrieval.db as retrieval_db
 import src.voter.db as db_module
 from src.voter.db import (
     get_item_tallies_for_meeting,
+    get_latest_run_id,
     get_user_votes,
     get_vote_tallies,
     init_db,
@@ -25,6 +25,7 @@ def tmp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Redirect DB_PATH to a temporary file for every test."""
     test_db = tmp_path / "test_quorum.db"
     monkeypatch.setattr(db_module, "DB_PATH", test_db)
+    monkeypatch.setattr(retrieval_db, "DB_PATH", test_db)
     init_db()
     return test_db
 
@@ -146,3 +147,8 @@ class TestGetUserVotes:
         submit_votes("bob", {"m1-1": {"vote": "against", "title": "Item 1"}})
         assert get_user_votes("alice") == {"m1-1": "for"}
         assert get_user_votes("bob") == {"m1-1": "against"}
+
+
+class TestPipelineBackedContent:
+    def test_fresh_database_returns_no_latest_run(self):
+        assert get_latest_run_id() is None

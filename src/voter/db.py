@@ -6,6 +6,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+import src.retrieval.db as retrieval_db
+
 DB_PATH = Path(__file__).resolve().parents[2] / "data" / "quorum.db"
 
 
@@ -31,7 +33,7 @@ def _users_table(demo: bool, populated: bool = False) -> str:
 
 
 def init_db():
-    """Create real and demo tables if they don't exist."""
+    """Create voter tables and ensure retrieval tables exist for empty DB startup."""
     conn = _connect()
     conn.executescript(
         """
@@ -85,6 +87,7 @@ def init_db():
         """
     )
     conn.close()
+    retrieval_db.init_retrieval_db()
 
 
 def register_user(username: str) -> str:

@@ -13,6 +13,7 @@ import qrcode  # noqa: E402
 import streamlit as st  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 
+from src.demo_scope import get_featured_meeting_id, is_voter_relevant_item  # noqa: E402
 from src.models.documents import AgendaItem, Meeting  # noqa: E402
 from src.parser.summariser import generate_pros_cons  # noqa: E402
 from src.voter.db import (  # noqa: E402
@@ -236,6 +237,13 @@ def show_content():
 
     # Build a meeting lookup
     meeting_lookup: dict[int, Meeting] = {m.meeting_id: m for m in meetings}
+    featured_meeting_id = get_featured_meeting_id(meetings)
+
+    if featured_meeting_id is not None:
+        st.info(
+            "Demo focus is active: showing the Cabinet meeting on 23 February 2026 as the "
+            "featured voter briefing."
+        )
 
     # Separate upcoming and past items, deduplicating by item key
     upcoming_items = []
@@ -246,7 +254,13 @@ def show_content():
         if key in seen:
             continue
         seen.add(key)
+        if not is_voter_relevant_item(item):
+            continue
         meeting = meeting_lookup.get(item.meeting_id)
+        if featured_meeting_id is not None:
+            if item.meeting_id == featured_meeting_id:
+                upcoming_items.append((item, meeting))
+            continue
         if meeting and meeting.is_upcoming:
             upcoming_items.append((item, meeting))
         else:
@@ -267,7 +281,14 @@ def show_content():
 
         st.markdown("---")
 
-    # Tabs for upcoming vs past
+    if featured_meeting_id is not None:
+        st.subheader(f"Upcoming ({len(upcoming_items)})")
+        if not upcoming_items:
+            st.info("No upcoming decisions found.")
+        else:
+            _render_items(upcoming_items, is_upcoming=True, prefix="up")
+        return
+
     tab_upcoming, tab_past = st.tabs(
         [f"📋 Upcoming ({len(upcoming_items)})", f"📁 Past Decisions ({len(past_items)})"]
     )
