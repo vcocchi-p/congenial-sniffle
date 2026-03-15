@@ -51,6 +51,23 @@ def _item_key(item: AgendaItem) -> str:
     return f"{item.meeting_id}-{item.item_number}"
 
 
+def _get_public_url() -> str:
+    """Get the public URL from ngrok, falling back to localhost."""
+    try:
+        import urllib.request
+
+        resp = urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=2)
+        import json
+
+        data = json.loads(resp.read())
+        for tunnel in data.get("tunnels", []):
+            if tunnel.get("proto") == "https":
+                return tunnel["public_url"]
+    except Exception:
+        pass
+    return "http://localhost:8502"
+
+
 def _generate_qr(url: str) -> bytes:
     """Generate a QR code PNG for the given URL."""
     img = qrcode.make(url)
@@ -131,9 +148,10 @@ def show_signup():
         st.markdown("---")
         st.caption("Share this page with others:")
 
-        # QR code for sharing
-        qr_bytes = _generate_qr("http://localhost:8502")
-        st.image(qr_bytes, width=200, caption="Scan to join")
+        # QR code for sharing — auto-detects ngrok URL
+        public_url = _get_public_url()
+        qr_bytes = _generate_qr(public_url)
+        st.image(qr_bytes, width=200, caption=public_url)
 
 
 # ---------------------------------------------------------------------------
