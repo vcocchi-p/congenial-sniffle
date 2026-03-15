@@ -41,12 +41,21 @@ st.markdown("---")
 # ---------------------------------------------------------------------------
 # Sidebar — demo toggle + meeting selector
 # ---------------------------------------------------------------------------
+use_populated = False
 with st.sidebar:
     use_demo = st.toggle("🎭 Demo data", value=False, help="Switch between live and demo data")
     if use_demo:
         st.caption("Showing 10k simulated voters — Westminster Council meeting March 2026.")
     else:
-        st.caption("Showing live voter submissions.")
+        use_populated = st.toggle(
+            "📊 Populated data",
+            value=False,
+            help="Show 500 simulated voters for the Cabinet 23 Feb meeting",
+        )
+        if use_populated:
+            st.caption("Showing 500 simulated voters for Cabinet 23 Feb 2026.")
+        else:
+            st.caption("Showing live voter submissions.")
     st.markdown("---")
 
 # ---------------------------------------------------------------------------
@@ -113,7 +122,7 @@ else:
     meeting_items = [i for i in all_items if i["meeting_id"] == selected_id]
     items = []
     for i in meeting_items:
-        tallies = get_vote_tallies(i["item_key"], use_demo=False)
+        tallies = get_vote_tallies(i["item_key"], use_demo=False, use_populated=use_populated)
         items.append({
             "item_key": i["item_key"],
             "item_title": i["title"],
@@ -149,7 +158,7 @@ with feed_col:
 
     @st.fragment(run_every=2)
     def live_vote_feed():
-        recent = get_recent_votes(limit=30, use_demo=use_demo)
+        recent = get_recent_votes(limit=30, use_demo=use_demo, use_populated=use_populated)
         if not recent:
             st.caption("No votes yet.")
             return

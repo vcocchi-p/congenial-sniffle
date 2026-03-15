@@ -18,11 +18,15 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
-def _votes_table(demo: bool) -> str:
+def _votes_table(demo: bool, populated: bool = False) -> str:
+    if populated:
+        return "populated_votes"
     return "demo_votes" if demo else "votes"
 
 
-def _users_table(demo: bool) -> str:
+def _users_table(demo: bool, populated: bool = False) -> str:
+    if populated:
+        return "populated_users"
     return "demo_users" if demo else "users"
 
 
@@ -60,6 +64,22 @@ def init_db():
             vote TEXT NOT NULL CHECK(vote IN ('for', 'against', 'abstain')),
             submitted_at TEXT NOT NULL,
             FOREIGN KEY (username) REFERENCES demo_users(username),
+            UNIQUE(username, item_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS populated_users (
+            username TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS populated_votes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            item_key TEXT NOT NULL,
+            item_title TEXT NOT NULL,
+            vote TEXT NOT NULL CHECK(vote IN ('for', 'against', 'abstain')),
+            submitted_at TEXT NOT NULL,
+            FOREIGN KEY (username) REFERENCES populated_users(username),
             UNIQUE(username, item_key)
         );
         """
@@ -123,9 +143,11 @@ def submit_votes(username: str, votes: dict[str, dict]) -> int:
     return count
 
 
-def get_vote_tallies(item_key: str, use_demo: bool = False) -> dict[str, int]:
+def get_vote_tallies(
+    item_key: str, use_demo: bool = False, use_populated: bool = False
+) -> dict[str, int]:
     """Get vote counts for an item. Returns {"for": N, "against": N, "abstain": N}."""
-    table = _votes_table(use_demo)
+    table = _votes_table(use_demo, populated=use_populated)
     conn = _connect()
     rows = conn.execute(
         f"SELECT vote, COUNT(*) as cnt FROM {table} WHERE item_key = ? GROUP BY vote",
@@ -276,12 +298,14 @@ def get_agenda_items(run_id: str) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def get_recent_votes(limit: int = 30, use_demo: bool = False) -> list[dict]:
+def get_recent_votes(
+    limit: int = 30, use_demo: bool = False, use_populated: bool = False
+) -> list[dict]:
     """Return the most recent votes cast, newest first.
 
     Returns list of dicts with keys: username, item_key, item_title, vote, submitted_at.
     """
-    table = _votes_table(use_demo)
+    table = _votes_table(use_demo, populated=use_populated)
     conn = _connect()
     rows = conn.execute(
         f"""
