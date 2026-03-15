@@ -248,7 +248,13 @@ def get_meetings(run_id: str) -> list[dict]:
     """Return all meetings for a pipeline run."""
     conn = _connect()
     rows = conn.execute(
-        "SELECT * FROM retrieval_meetings WHERE run_id = ?", (run_id,)
+        """
+        SELECT mv.*
+        FROM retrieval_meeting_versions mv
+        JOIN retrieval_run_meetings rm ON rm.meeting_version_id = mv.meeting_version_id
+        WHERE rm.run_id = ?
+        """,
+        (run_id,),
     ).fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -258,7 +264,13 @@ def get_agenda_items(run_id: str) -> list[dict]:
     """Return all agenda items for a pipeline run."""
     conn = _connect()
     rows = conn.execute(
-        "SELECT * FROM retrieval_agenda_items WHERE run_id = ?", (run_id,)
+        """
+        SELECT av.*
+        FROM retrieval_agenda_item_versions av
+        JOIN retrieval_run_agenda_items ra ON ra.agenda_item_version_id = av.agenda_item_version_id
+        WHERE ra.run_id = ?
+        """,
+        (run_id,),
     ).fetchall()
     conn.close()
     return [dict(row) for row in rows]
