@@ -51,6 +51,12 @@ def _bundle_for_demo() -> RetrievalBundle:
         agenda_items=[
             AgendaItem(
                 meeting_id=6718,
+                item_number="1",
+                title="Welcome",
+                description="Procedural opening item.",
+            ),
+            AgendaItem(
+                meeting_id=6718,
                 item_number="4",
                 title="Business and Financial Planning 2026/27 to 2028/29",
                 description="To consider the annual budget report.",
@@ -126,6 +132,7 @@ def test_detect_important_meeting_can_pin_demo_meeting():
     assert selection.meeting_id == 6718
     assert selection.analysis_mode == "demo_upcoming"
     assert selection.priority_score == 999.0
+    assert selection.item_keys == ["6718-4", "6718-11"]
 
 
 def test_detect_important_meeting_falls_back_when_demo_meeting_missing():
@@ -199,3 +206,4 @@ def test_analyse_meeting_persists_demo_upcoming_output():
     assert stored_item is not None
     assert stored_item.analysis_mode == "demo_upcoming"
     assert stored_item.source_urls[0].endswith("MId=6718&Ver=4")
+    assert load_item_analysis("6718-1", analysis_mode="demo_upcoming") is None

@@ -7,20 +7,26 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import asyncio
 import io
-from datetime import datetime, timezone
 
 import qrcode
 import streamlit as st
 from dotenv import load_dotenv
 
-from src.agents.pipeline import run_pipeline  # noqa: E402
-from src.analysis.db import load_item_analysis, load_latest_meeting_selection  # noqa: E402
+from src.analysis.db import load_item_analysis  # noqa: E402
+from src.analysis.relevance import is_voter_relevant_agenda_item  # noqa: E402
 from src.models.documents import AgendaItem, Meeting  # noqa: E402
-from src.parser.summariser import generate_pros_cons  # noqa: E402
-from src.retrieval.db import load_latest_retrieval_bundle  # noqa: E402
-from src.voter.db import get_vote_tallies, init_db, register_user, submit_votes, user_exists
+from src.voter.db import (  # noqa: E402
+    get_agenda_items,
+    get_latest_run_id,
+    get_meetings,
+    get_vote_tallies,
+    init_db,
+    register_user,
+    submit_votes,
+    user_exists,
+)
+from src.voter.presentation import is_demo_mode_active, is_demo_upcoming  # noqa: E402
 
 load_dotenv()
 init_db()
@@ -37,12 +43,8 @@ if "voter_username" not in st.session_state:
     st.session_state.voter_username = None
 if "votes" not in st.session_state:
     st.session_state.votes = {}  # {item_key: {"vote": "for"|"against"|"abstain", "user": str}}
-if "pipeline_data" not in st.session_state:
-    st.session_state.pipeline_data = None
 if "pros_cons_cache" not in st.session_state:
     st.session_state.pros_cons_cache = {}  # {item_key: pros_cons_dict}
-if "fetching" not in st.session_state:
-    st.session_state.fetching = False
 if "submitted_votes" not in st.session_state:
     st.session_state.submitted_votes = {}
 
@@ -79,30 +81,47 @@ def _generate_qr(url: str) -> bytes:
     return buf.getvalue()
 
 
-def _fetch_pipeline_data():
-    """Run the retrieval pipeline and cache results."""
-    with st.spinner("Loading the latest council data..."):
-        data = load_latest_retrieval_bundle()
-        if data is None:
-            loop = asyncio.new_event_loop()
-            try:
-                data = loop.run_until_complete(
-                    run_pipeline(
-                        run_id=f"voter-{int(datetime.now(timezone.utc).timestamp())}",
-                        max_meetings_per_committee=3,
-                    )
-                )
-            finally:
-                loop.close()
-    st.session_state.pipeline_data = data
-    st.session_state.fetching = False
+def _load_council_data() -> tuple[list[Meeting], list[AgendaItem]] | None:
+    """Load meetings and agenda items from the latest completed pipeline run."""
+    run_id = get_latest_run_id()
+    if run_id is None:
+        return None
+
+    meeting_rows = get_meetings(run_id)
+    item_rows = get_agenda_items(run_id)
+
+    meetings = [
+        Meeting(
+            committee_id=row["committee_id"],
+            committee_name=row["committee_name"],
+            meeting_id=row["meeting_id"],
+            date=row["date"],
+            url=row["url"],
+            is_upcoming=bool(row["is_upcoming"]),
+        )
+        for row in meeting_rows
+    ]
+    agenda_items = [
+        AgendaItem(
+            meeting_id=row["meeting_id"],
+            item_number=row["item_number"],
+            title=row["title"],
+            description=row["description"],
+            decision_text=row["decision_text"],
+            minutes_text=row["minutes_text"],
+            decision_url=row.get("decision_url"),
+        )
+        for row in item_rows
+    ]
+    return meetings, agenda_items
 
 
-def _get_pros_cons(item: AgendaItem, is_upcoming: bool) -> dict:
-    """Get pros/cons for an item, using cache if available."""
+def _get_persisted_analysis(item: AgendaItem, is_upcoming: bool) -> dict | None:
+    """Return persisted analysis for an item, using cache if available."""
     key = _item_key(item)
     if key not in st.session_state.pros_cons_cache:
-        persisted = load_item_analysis(key)
+        analysis_mode = "demo_upcoming" if is_demo_mode_active() and is_upcoming else None
+        persisted = load_item_analysis(key, analysis_mode=analysis_mode)
         if persisted is not None:
             st.session_state.pros_cons_cache[key] = {
                 "item": item,
@@ -113,27 +132,12 @@ def _get_pros_cons(item: AgendaItem, is_upcoming: bool) -> dict:
                 "councillors": persisted.councillors_involved,
                 "status": "upcoming" if is_upcoming else "decided",
                 "why_it_matters": persisted.why_it_matters,
+                "what_to_watch": persisted.what_to_watch,
+                "notify_voters": persisted.notify_voters,
             }
         else:
-            with st.spinner(f"Analysing: {item.title}..."):
-                result = generate_pros_cons(item, is_upcoming=is_upcoming)
-                st.session_state.pros_cons_cache[key] = result
+            st.session_state.pros_cons_cache[key] = None
     return st.session_state.pros_cons_cache[key]
-
-
-def _is_demo_upcoming(
-    item: AgendaItem,
-    meeting: Meeting | None,
-) -> bool:
-    """Treat a selected demo meeting as upcoming for the voter experience."""
-    if meeting is not None and meeting.is_upcoming:
-        return True
-    selection = load_latest_meeting_selection()
-    return (
-        selection is not None
-        and selection.meeting_id == item.meeting_id
-        and selection.analysis_mode.endswith("upcoming")
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -227,34 +231,27 @@ def show_content():
 
     st.markdown("---")
 
-    featured_selection = load_latest_meeting_selection()
-    if featured_selection is not None and featured_selection.analysis_mode.endswith("upcoming"):
+    if is_demo_mode_active():
         st.info(
             "Demo mode is active: the selected meeting is being presented as upcoming so "
             "voters can review the pre-meeting analysis."
         )
 
-    # Fetch data if not cached
-    if st.session_state.pipeline_data is None:
+    result = _load_council_data()
+    if result is None:
         st.info("We need to fetch the latest council data. This may take a minute.")
-        if st.button("🔄 Load Council Decisions", type="primary"):
-            _fetch_pipeline_data()
-            st.rerun()
         return
 
-    data = st.session_state.pipeline_data
-    meetings: list[Meeting] = data.meetings if data is not None else []
-    agenda_items: list[AgendaItem] = data.agenda_items if data is not None else []
+    meetings, agenda_items = result
 
     if not agenda_items:
-        st.warning("No agenda items found. Try refreshing the data.")
-        if st.button("🔄 Refresh"):
-            st.session_state.pipeline_data = None
-            st.rerun()
+        st.warning("No agenda items found in the latest pipeline run.")
         return
 
     # Build a meeting lookup
     meeting_lookup: dict[int, Meeting] = {m.meeting_id: m for m in meetings}
+
+    demo_mode_active = is_demo_mode_active()
 
     # Separate upcoming and past items, deduplicating by item key
     upcoming_items = []
@@ -265,8 +262,16 @@ def show_content():
         if key in seen:
             continue
         seen.add(key)
+        if not is_voter_relevant_agenda_item(item):
+            continue
         meeting = meeting_lookup.get(item.meeting_id)
-        if _is_demo_upcoming(item, meeting):
+        is_upcoming_item = is_demo_upcoming(item, meeting)
+        persisted_analysis = _get_persisted_analysis(item, is_upcoming_item)
+        if persisted_analysis is not None and not persisted_analysis.get("notify_voters", True):
+            continue
+        if demo_mode_active and persisted_analysis is None:
+            continue
+        if is_upcoming_item:
             upcoming_items.append((item, meeting))
         else:
             past_items.append((item, meeting))
@@ -284,13 +289,14 @@ def show_content():
                 title = vote_data.get("title", key)[:40]
                 st.markdown(f"- **{title}**: {vote_label[vote_data['vote']]}")
 
-        st.markdown("---")
-        if st.button("🔄 Refresh Data"):
-            st.session_state.pipeline_data = None
-            st.session_state.pros_cons_cache = {}
-            st.rerun()
+    if demo_mode_active:
+        st.subheader(f"Upcoming ({len(upcoming_items)})")
+        if not upcoming_items:
+            st.info("No upcoming decisions found.")
+        else:
+            _render_items(upcoming_items, is_upcoming=True, prefix="up")
+        return
 
-    # Tabs for upcoming vs past
     tab_upcoming, tab_past = st.tabs(
         [f"📋 Upcoming ({len(upcoming_items)})", f"📁 Past Decisions ({len(past_items)})"]
     )
@@ -322,13 +328,8 @@ def _render_items(
             if item.description:
                 st.markdown(f"*{item.description}*")
 
-            # Pros & cons (generated on demand)
-            if st.button("📊 Show Analysis", key=f"analyse-{prefix}-{key}"):
-                st.session_state[f"show_analysis_{key}"] = True
-
-            if st.session_state.get(f"show_analysis_{key}", False):
-                analysis = _get_pros_cons(item, is_upcoming)
-
+            analysis = _get_persisted_analysis(item, is_upcoming)
+            if analysis is not None:
                 st.markdown(f"**Summary:** {analysis['summary']}")
                 if analysis.get("why_it_matters"):
                     st.markdown(f"**Why it matters:** {analysis['why_it_matters']}")
@@ -345,6 +346,11 @@ def _render_items(
 
                 if analysis.get("councillors"):
                     st.markdown(f"**Councillors mentioned:** {', '.join(analysis['councillors'])}")
+                if analysis.get("what_to_watch"):
+                    st.markdown(f"**What to watch:** {analysis['what_to_watch']}")
+            else:
+                st.info("Analysis is not ready for this item yet.")
+                continue
 
             st.markdown("---")
 

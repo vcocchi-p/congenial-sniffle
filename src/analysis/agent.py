@@ -14,6 +14,7 @@ from src.analysis.db import (
     record_analysis_run_started,
     record_meeting_selection,
 )
+from src.analysis.relevance import is_voter_relevant_agenda_item
 from src.models.analysis import (
     AgendaItemAnalysis,
     AnalysisRun,
@@ -117,7 +118,10 @@ def analyse_meeting(
         item
         for item in load_analysis_inputs(selection.retrieval_run_id)
         if item.meeting is not None and item.meeting.meeting_id == selection.meeting_id
+        and is_voter_relevant_agenda_item(item.agenda_item)
     ]
+    if not inputs:
+        raise ValueError("No voter-relevant agenda items were found for the selected meeting.")
     source_url = inputs[0].meeting.url if inputs and inputs[0].meeting is not None else None
 
     _emit_analysis_event(
@@ -326,7 +330,11 @@ def _build_forced_selection(
             "an upcoming-meeting briefing from persisted retrieval data."
         ),
         selected_at=selected_at,
-        item_keys=[item.item_key for item in meeting_inputs],
+        item_keys=[
+            item.item_key
+            for item in meeting_inputs
+            if is_voter_relevant_agenda_item(item.agenda_item)
+        ],
     )
 
 
@@ -357,7 +365,11 @@ def _score_and_select_meeting(
         priority_score=score,
         reason_selected=reason,
         selected_at=selected_at,
-        item_keys=[item.item_key for item in best_inputs],
+        item_keys=[
+            item.item_key
+            for item in best_inputs
+            if is_voter_relevant_agenda_item(item.agenda_item)
+        ],
     )
 
 
