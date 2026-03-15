@@ -1,0 +1,32 @@
+[project]
+name = "congenial-sniffle"
+version = "0.1.0"
+description = "Westminster Council transparency pipeline"
+requires-python = ">=3.10"
+dependencies = [
+    "claude-agent-sdk",
+    "openai",
+    "streamlit",
+    "httpx",
+    "beautifulsoup4",
+    "pydantic",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "ruff",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
