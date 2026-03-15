@@ -1,5 +1,7 @@
 """Tests for dashboard state derivation."""
 
+from pathlib import Path
+
 import pytest
 
 from src.dashboard.mock_data import create_seeded_dashboard_data
@@ -27,6 +29,24 @@ from src.models.documents import (
     MeetingDocument,
     RetrievalBundle,
 )
+from src.retrieval import db as retrieval_db
+from src.retrieval.db import (
+    list_retrieval_runs,
+)
+from src.retrieval.db import (
+    load_retrieval_bundle as load_persisted_bundle,
+)
+from src.retrieval.db import (
+    load_retrieval_events as load_persisted_events,
+)
+
+
+@pytest.fixture(autouse=True)
+def tmp_retrieval_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    test_db = tmp_path / "test_quorum.db"
+    monkeypatch.setattr(retrieval_db, "DB_PATH", test_db)
+    retrieval_db.init_retrieval_db()
+    return test_db
 
 
 def test_initialize_state_populates_empty_mapping():
@@ -168,6 +188,9 @@ def test_start_retrieval_run_stores_bundle_and_updates_history():
     overview = load_retrieval_overview(state, request.run_id)
     stages = load_stage_snapshots(state)
     bundle = load_run_bundle(state, request.run_id)
+    persisted_runs = list_retrieval_runs()
+    persisted_events = load_persisted_events(request.run_id)
+    persisted_bundle = load_persisted_bundle(request.run_id)
 
     assert request.request_id == "request-001"
     assert request.status == "completed"
@@ -177,6 +200,10 @@ def test_start_retrieval_run_stores_bundle_and_updates_history():
     assert bundle is not None
     assert len(bundle.documents) == 1
     assert stages[0].status == "completed"
+    assert persisted_runs[0]["run_id"] == request.run_id
+    assert persisted_events[-1].event_type == "completed"
+    assert persisted_bundle is not None
+    assert persisted_bundle.documents[0].title == "Budget Report"
 
 
 def test_start_retrieval_run_rejects_invalid_url():
