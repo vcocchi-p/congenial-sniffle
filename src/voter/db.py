@@ -132,6 +132,96 @@ def get_all_tallies() -> dict[str, dict]:
     return result
 
 
+def get_meetings_with_votes() -> list[dict]:
+    """Return all meeting IDs that have at least one vote, with engagement stats.
+
+    Returns list of dicts with keys: meeting_id, unique_voters, total_votes, items_voted_on.
+    item_key format is "{meeting_id}-{item_number}", so meeting_id is everything before the
+    last hyphen-separated number.
+    """
+    conn = _connect()
+    rows = conn.execute(
+        """
+        SELECT
+            item_key,
+            COUNT(DISTINCT username) as unique_voters,
+            COUNT(*) as total_votes
+        FROM votes
+        GROUP BY item_key
+        """
+    ).fetchall()
+    conn.close()
+
+    # Group by meeting_id (prefix before last "-")
+    meetings: dict[str, dict] = {}
+    for row in rows:
+        parts = row["item_key"].rsplit("-", 1)
+        meeting_id = parts[0] if len(parts) == 2 else row["item_key"]
+        if meeting_id not in meetings:
+            meetings[meeting_id] = {"meeting_id": meeting_id, "unique_voters": set(), "total_votes": 0, "items_voted_on": 0}  # noqa: E501
+        meetings[meeting_id]["unique_voters"].add(row["unique_voters"])
+        meetings[meeting_id]["total_votes"] += row["total_votes"]
+        meetings[meeting_id]["items_voted_on"] += 1
+
+    # Resolve unique voters per meeting (union of voters across all items)
+    conn = _connect()
+    result = []
+    for meeting_id, data in meetings.items():
+        voter_row = conn.execute(
+            """
+            SELECT COUNT(DISTINCT username) as unique_voters
+            FROM votes
+            WHERE item_key LIKE ?
+            """,
+            (f"{meeting_id}-%",),
+        ).fetchone()
+        result.append({
+            "meeting_id": meeting_id,
+            "unique_voters": voter_row["unique_voters"] if voter_row else 0,
+            "total_votes": data["total_votes"],
+            "items_voted_on": data["items_voted_on"],
+        })
+    conn.close()
+    return sorted(result, key=lambda x: x["total_votes"], reverse=True)
+
+
+def get_item_tallies_for_meeting(meeting_id: str) -> list[dict]:
+    """Return per-item vote tallies for a given meeting.
+
+    Returns list of dicts with keys: item_key, item_title, for, against, abstain, total.
+    Sorted by total votes descending.
+    """
+    conn = _connect()
+    rows = conn.execute(
+        """
+        SELECT item_key, item_title, vote, COUNT(*) as cnt
+        FROM votes
+        WHERE item_key LIKE ?
+        GROUP BY item_key, vote
+        """,
+        (f"{meeting_id}-%",),
+    ).fetchall()
+    conn.close()
+
+    items: dict[str, dict] = {}
+    for row in rows:
+        key = row["item_key"]
+        if key not in items:
+            items[key] = {
+                "item_key": key,
+                "item_title": row["item_title"],
+                "for": 0,
+                "against": 0,
+                "abstain": 0,
+            }
+        items[key][row["vote"]] = row["cnt"]
+
+    for item in items.values():
+        item["total"] = item["for"] + item["against"] + item["abstain"]
+
+    return sorted(items.values(), key=lambda x: x["total"], reverse=True)
+
+
 def get_user_votes(username: str) -> dict[str, str]:
     """Get all votes by a user. Returns {item_key: vote}."""
     conn = _connect()

@@ -12,6 +12,7 @@ dependencies = [
     "pydantic",
     "qrcode[pil]",
     "python-dotenv",
+    "plotly",
 ]
 
 [project.optional-dependencies]
