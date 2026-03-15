@@ -141,8 +141,10 @@ def show_signup():
                 st.session_state.voter_username = name
                 st.rerun()
             else:
-                register_user(name)
-                st.session_state.voter_username = name
+                final_name = register_user(name)
+                st.session_state.voter_username = final_name
+                if final_name != name:
+                    st.info(f'"{name}" was taken — you\'ve been signed up as "{final_name}".')
                 st.rerun()
 
         st.markdown("---")
@@ -179,8 +181,7 @@ def show_content():
                 st.session_state.submitted_votes = dict(st.session_state.votes)
                 st.session_state.votes = {}
                 st.success(
-                    f"✅ {count} vote(s) submitted and saved. "
-                    "Thank you for having your say!"
+                    f"✅ {count} vote(s) submitted and saved. Thank you for having your say!"
                 )
                 st.balloons()
         with col_count:
@@ -262,7 +263,9 @@ def show_content():
             _render_items(past_items, is_upcoming=False, prefix="past")
 
 
-def _render_items(items: list[tuple[AgendaItem, Meeting | None]], is_upcoming: bool, prefix: str = ""):
+def _render_items(
+    items: list[tuple[AgendaItem, Meeting | None]], is_upcoming: bool, prefix: str = ""
+):
     """Render agenda items with pros/cons and vote buttons."""
     for item, meeting in items:
         key = _item_key(item)
@@ -324,7 +327,9 @@ def _render_items(items: list[tuple[AgendaItem, Meeting | None]], is_upcoming: b
                 col_for, col_against, col_abstain = st.columns(3)
 
                 with col_for:
-                    if st.button("👍 Vote For", key=f"for-{prefix}-{key}", use_container_width=True):
+                    if st.button(
+                        "👍 Vote For", key=f"for-{prefix}-{key}", use_container_width=True
+                    ):
                         st.session_state.votes[key] = {
                             "vote": "for",
                             "user": st.session_state.voter_username,
@@ -332,7 +337,9 @@ def _render_items(items: list[tuple[AgendaItem, Meeting | None]], is_upcoming: b
                         }
                         st.rerun()
                 with col_against:
-                    if st.button("👎 Vote Against", key=f"against-{prefix}-{key}", use_container_width=True):
+                    if st.button(
+                        "👎 Vote Against", key=f"against-{prefix}-{key}", use_container_width=True
+                    ):
                         st.session_state.votes[key] = {
                             "vote": "against",
                             "user": st.session_state.voter_username,
@@ -340,7 +347,9 @@ def _render_items(items: list[tuple[AgendaItem, Meeting | None]], is_upcoming: b
                         }
                         st.rerun()
                 with col_abstain:
-                    if st.button("🤷 Abstain", key=f"abstain-{prefix}-{key}", use_container_width=True):
+                    if st.button(
+                        "🤷 Abstain", key=f"abstain-{prefix}-{key}", use_container_width=True
+                    ):
                         st.session_state.votes[key] = {
                             "vote": "abstain",
                             "user": st.session_state.voter_username,

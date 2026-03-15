@@ -43,18 +43,27 @@ def init_db():
     conn.close()
 
 
-def register_user(username: str) -> bool:
-    """Register a new user. Returns True if created, False if already exists."""
+def register_user(username: str) -> str:
+    """Register a new user, auto-disambiguating on conflict.
+
+    Returns the final username that was registered (may differ from input
+    if there was a conflict, e.g. "user" → "user2" → "user3" etc.).
+    """
     conn = _connect()
     try:
-        conn.execute(
-            "INSERT INTO users (username, created_at) VALUES (?, ?)",
-            (username, datetime.now(timezone.utc).isoformat()),
-        )
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        return False
+        candidate = username
+        suffix = 2
+        while True:
+            try:
+                conn.execute(
+                    "INSERT INTO users (username, created_at) VALUES (?, ?)",
+                    (candidate, datetime.now(timezone.utc).isoformat()),
+                )
+                conn.commit()
+                return candidate
+            except sqlite3.IntegrityError:
+                candidate = f"{username}{suffix}"
+                suffix += 1
     finally:
         conn.close()
 
