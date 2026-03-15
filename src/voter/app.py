@@ -192,10 +192,15 @@ def show_content():
     # Build a meeting lookup
     meeting_lookup: dict[int, Meeting] = {m.meeting_id: m for m in meetings}
 
-    # Separate upcoming and past items
+    # Separate upcoming and past items, deduplicating by item key
     upcoming_items = []
     past_items = []
+    seen: set[str] = set()
     for item in agenda_items:
+        key = _item_key(item)
+        if key in seen:
+            continue
+        seen.add(key)
         meeting = meeting_lookup.get(item.meeting_id)
         if meeting and meeting.is_upcoming:
             upcoming_items.append((item, meeting))
@@ -230,16 +235,16 @@ def show_content():
         if not upcoming_items:
             st.info("No upcoming decisions found.")
         else:
-            _render_items(upcoming_items, is_upcoming=True)
+            _render_items(upcoming_items, is_upcoming=True, prefix="up")
 
     with tab_past:
         if not past_items:
             st.info("No past decisions found.")
         else:
-            _render_items(past_items, is_upcoming=False)
+            _render_items(past_items, is_upcoming=False, prefix="past")
 
 
-def _render_items(items: list[tuple[AgendaItem, Meeting | None]], is_upcoming: bool):
+def _render_items(items: list[tuple[AgendaItem, Meeting | None]], is_upcoming: bool, prefix: str = ""):
     """Render agenda items with pros/cons and vote buttons."""
     for item, meeting in items:
         key = _item_key(item)
@@ -252,7 +257,7 @@ def _render_items(items: list[tuple[AgendaItem, Meeting | None]], is_upcoming: b
                 st.markdown(f"*{item.description}*")
 
             # Pros & cons (generated on demand)
-            if st.button("📊 Show Analysis", key=f"analyse-{key}"):
+            if st.button("📊 Show Analysis", key=f"analyse-{prefix}-{key}"):
                 st.session_state[f"show_analysis_{key}"] = True
 
             if st.session_state.get(f"show_analysis_{key}", False):
@@ -293,7 +298,7 @@ def _render_items(items: list[tuple[AgendaItem, Meeting | None]], is_upcoming: b
             if existing_vote:
                 vote_label = {"for": "👍 For", "against": "👎 Against", "abstain": "🤷 Abstain"}
                 st.success(f"You voted: **{vote_label[existing_vote['vote']]}**")
-                if st.button("Change vote", key=f"change-{key}"):
+                if st.button("Change vote", key=f"change-{prefix}-{key}"):
                     del st.session_state.votes[key]
                     st.rerun()
             else:
@@ -301,7 +306,7 @@ def _render_items(items: list[tuple[AgendaItem, Meeting | None]], is_upcoming: b
                 col_for, col_against, col_abstain = st.columns(3)
 
                 with col_for:
-                    if st.button("👍 Vote For", key=f"for-{key}", use_container_width=True):
+                    if st.button("👍 Vote For", key=f"for-{prefix}-{key}", use_container_width=True):
                         st.session_state.votes[key] = {
                             "vote": "for",
                             "user": st.session_state.voter_username,
@@ -309,7 +314,7 @@ def _render_items(items: list[tuple[AgendaItem, Meeting | None]], is_upcoming: b
                         }
                         st.rerun()
                 with col_against:
-                    if st.button("👎 Vote Against", key=f"against-{key}", use_container_width=True):
+                    if st.button("👎 Vote Against", key=f"against-{prefix}-{key}", use_container_width=True):
                         st.session_state.votes[key] = {
                             "vote": "against",
                             "user": st.session_state.voter_username,
@@ -317,7 +322,7 @@ def _render_items(items: list[tuple[AgendaItem, Meeting | None]], is_upcoming: b
                         }
                         st.rerun()
                 with col_abstain:
-                    if st.button("🤷 Abstain", key=f"abstain-{key}", use_container_width=True):
+                    if st.button("🤷 Abstain", key=f"abstain-{prefix}-{key}", use_container_width=True):
                         st.session_state.votes[key] = {
                             "vote": "abstain",
                             "user": st.session_state.voter_username,
