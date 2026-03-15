@@ -12,9 +12,11 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from src.voter.db import (
-    get_item_tallies_for_meeting,
-    get_meetings_with_votes,
+    get_agenda_items,
+    get_latest_run_id,
+    get_meetings,
     get_recent_votes,
+    get_vote_tallies,
     init_db,
 )
 
@@ -46,42 +48,63 @@ with st.sidebar:
     st.markdown("---")
 
 # ---------------------------------------------------------------------------
-# Load data
+# Load data from retrieval DB
 # ---------------------------------------------------------------------------
-meetings = get_meetings_with_votes(use_demo=use_demo)
+run_id = get_latest_run_id()
 
-if not meetings:
-    if use_demo:
-        st.warning("Demo data not seeded yet. Run: `python -m src.voter.seed`")
-    else:
-        st.info("No votes have been submitted yet. Share the voter app and ask people to vote!")
+if run_id is None:
+    st.info("No pipeline run found. Run the retrieval pipeline first.")
+    st.stop()
+
+all_meetings = get_meetings(run_id)
+
+if not all_meetings:
+    st.info("No meetings found in the latest pipeline run.")
     st.stop()
 
 with st.sidebar:
     st.header("📅 Select Meeting")
     meeting_labels = {
-        m["meeting_id"]: f"{m['meeting_id']} — {m['unique_voters']:,} voters"
-        for m in meetings
+        m["meeting_id"]: f"{m['committee_name']} — {m['date']}"
+        for m in all_meetings
     }
     selected_id = st.radio(
         "Meeting",
-        options=[m["meeting_id"] for m in meetings],
+        options=[m["meeting_id"] for m in all_meetings],
         format_func=lambda x: meeting_labels[x],
         label_visibility="collapsed",
     )
     st.markdown("---")
-    st.caption(f"{len(meetings)} meeting(s) with votes")
+    st.caption(f"{len(all_meetings)} meeting(s) loaded")
+
+# ---------------------------------------------------------------------------
+# Build items list: retrieval DB agenda items + vote tallies overlaid
+# ---------------------------------------------------------------------------
+all_items = get_agenda_items(run_id)
+meeting_items = [i for i in all_items if i["meeting_id"] == selected_id]
+
+items = []
+for i in meeting_items:
+    tallies = get_vote_tallies(i["item_key"], use_demo=use_demo)
+    items.append({
+        "item_key": i["item_key"],
+        "item_title": i["title"],
+        "for": tallies["for"],
+        "against": tallies["against"],
+        "abstain": tallies["abstain"],
+        "total": tallies["for"] + tallies["against"] + tallies["abstain"],
+    })
 
 # ---------------------------------------------------------------------------
 # Meeting-level headline metrics
 # ---------------------------------------------------------------------------
-selected = next(m for m in meetings if m["meeting_id"] == selected_id)
-items = get_item_tallies_for_meeting(selected_id, use_demo=use_demo)
+total_votes = sum(i["total"] for i in items)
+items_with_votes = sum(1 for i in items if i["total"] > 0)
 
 col1, col2, col3 = st.columns(3)
-col1.metric("👥 Unique Voters", selected["unique_voters"])
-col2.metric("🗳️ Total Votes Cast", selected["total_votes"])
-col3.metric("📋 Agenda Items Voted On", selected["items_voted_on"])
+col1.metric("🗳️ Total Votes Cast", total_votes)
+col2.metric("📋 Agenda Items", len(items))
+col3.metric("📊 Items With Votes", items_with_votes)
 
 st.markdown("---")
 
