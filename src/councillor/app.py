@@ -196,7 +196,7 @@ with feed_col:
 
 with main_col:
     # ---------------------------------------------------------------------------
-    # Engagement overview — horizontal bar chart
+    # Engagement overview — horizontal bar chart (only when votes exist)
     # ---------------------------------------------------------------------------
     st.subheader("Engagement by Agenda Item")
 
@@ -206,50 +206,55 @@ with main_col:
         return [f"{c / t * 100:.0f}%" if t else "" for c, t in zip(counts, totals)]
 
     totals = [i["total"] for i in items]
+    any_votes = sum(totals) > 0
 
-    fig_engagement = go.Figure()
-    fig_engagement.add_trace(go.Bar(
-        name="For",
-        y=titles,
-        x=[i["for"] for i in items],
-        orientation="h",
-        marker_color="#2ecc71",
-        text=_pct_labels([i["for"] for i in items], totals),
-        textposition="inside",
-        insidetextanchor="middle",
-        textfont=dict(color="white", size=12),
-    ))
-    fig_engagement.add_trace(go.Bar(
-        name="Against",
-        y=titles,
-        x=[i["against"] for i in items],
-        orientation="h",
-        marker_color="#e74c3c",
-        text=_pct_labels([i["against"] for i in items], totals),
-        textposition="inside",
-        insidetextanchor="middle",
-        textfont=dict(color="white", size=12),
-    ))
-    fig_engagement.add_trace(go.Bar(
-        name="Abstain",
-        y=titles,
-        x=[i["abstain"] for i in items],
-        orientation="h",
-        marker_color="#95a5a6",
-        text=_pct_labels([i["abstain"] for i in items], totals),
-        textposition="inside",
-        insidetextanchor="middle",
-        textfont=dict(color="white", size=12),
-    ))
-    fig_engagement.update_layout(
-        barmode="stack",
-        height=max(300, len(items) * 50),
-        margin=dict(l=20, r=20, t=20, b=20),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        xaxis_title="Votes",
-        yaxis=dict(autorange="reversed"),
-    )
-    st.plotly_chart(fig_engagement, use_container_width=True)
+    if not any_votes:
+        st.info(f"⏳ {len(items)} agenda items loaded — waiting for votes to come in.")
+
+    if any_votes:
+        fig_engagement = go.Figure()
+        fig_engagement.add_trace(go.Bar(
+            name="For",
+            y=titles,
+            x=[i["for"] for i in items],
+            orientation="h",
+            marker_color="#2ecc71",
+            text=_pct_labels([i["for"] for i in items], totals),
+            textposition="inside",
+            insidetextanchor="middle",
+            textfont=dict(color="white", size=12),
+        ))
+        fig_engagement.add_trace(go.Bar(
+            name="Against",
+            y=titles,
+            x=[i["against"] for i in items],
+            orientation="h",
+            marker_color="#e74c3c",
+            text=_pct_labels([i["against"] for i in items], totals),
+            textposition="inside",
+            insidetextanchor="middle",
+            textfont=dict(color="white", size=12),
+        ))
+        fig_engagement.add_trace(go.Bar(
+            name="Abstain",
+            y=titles,
+            x=[i["abstain"] for i in items],
+            orientation="h",
+            marker_color="#95a5a6",
+            text=_pct_labels([i["abstain"] for i in items], totals),
+            textposition="inside",
+            insidetextanchor="middle",
+            textfont=dict(color="white", size=12),
+        ))
+        fig_engagement.update_layout(
+            barmode="stack",
+            height=max(300, len(items) * 50),
+            margin=dict(l=20, r=20, t=20, b=20),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            xaxis_title="Votes",
+            yaxis=dict(autorange="reversed"),
+        )
+        st.plotly_chart(fig_engagement, use_container_width=True)
 
     st.markdown("---")
 
