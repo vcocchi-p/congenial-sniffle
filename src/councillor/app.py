@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
 
-from src.councillor.notify import send_whatsapp
+from src.councillor.notify import is_whatsapp_available, send_whatsapp
 from src.demo_scope import get_featured_meeting_id, is_voter_relevant_title
 from src.voter.db import (
     get_agenda_items,
@@ -132,6 +132,8 @@ else:
         st.caption(f"{len(all_meetings)} meeting(s) loaded")
         st.markdown("---")
         st.subheader("📣 Notify Voters")
+        if not is_whatsapp_available():
+            st.caption("WhatsApp notifications unavailable until the Twilio dependency is installed.")
         selected_label = meeting_labels.get(selected_id, selected_id)
         default_notify_msg = (
             f"New council meeting coming up: {selected_label}. "
@@ -143,7 +145,12 @@ else:
             height=100,
             key="notify_msg",
         )
-        if st.button("Send WhatsApp notification", type="primary", key="notify_btn"):
+        if st.button(
+            "Send WhatsApp notification",
+            type="primary",
+            key="notify_btn",
+            disabled=not is_whatsapp_available(),
+        ):
             try:
                 sid = send_whatsapp(notify_msg)
                 st.success(f"Sent! SID: {sid}")
