@@ -3,6 +3,7 @@
 from src.dashboard.constants import (
     DASHBOARD_CURRENT_RUN_KEY,
     DASHBOARD_PIPELINE_REQUESTS_KEY,
+    DASHBOARD_RUN_BUNDLES_KEY,
     DASHBOARD_RUN_DOCUMENTS_KEY,
     DASHBOARD_RUN_EVENTS_KEY,
     DASHBOARD_RUN_ORDER_KEY,
@@ -21,6 +22,7 @@ def test_seeded_dashboard_data_is_deterministic():
     assert first[DASHBOARD_CURRENT_RUN_KEY] is None
     assert first[DASHBOARD_SELECTED_RUN_KEY] == "run-003"
     assert first[DASHBOARD_PIPELINE_REQUESTS_KEY] == []
+    assert first[DASHBOARD_RUN_BUNDLES_KEY] == {}
     assert (
         first[DASHBOARD_RUN_EVENTS_KEY]["run-003"][-1].timestamp
         == second[DASHBOARD_RUN_EVENTS_KEY]["run-003"][-1].timestamp

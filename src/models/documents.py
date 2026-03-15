@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DocumentType(str, Enum):
@@ -38,7 +38,7 @@ class Meeting(BaseModel):
     date: str  # e.g. "31 Mar 2025 6.30 pm"
     url: str
     is_upcoming: bool = False
-    attendees: list[Councillor] = []
+    attendees: list[Councillor] = Field(default_factory=list)
 
 
 class MeetingDocument(BaseModel):
@@ -48,6 +48,7 @@ class MeetingDocument(BaseModel):
     title: str
     doc_type: DocumentType
     url: str
+    fetched_at: datetime | None = None
 
 
 class AgendaItem(BaseModel):
@@ -60,6 +61,28 @@ class AgendaItem(BaseModel):
     decision_text: str = ""
     minutes_text: str = ""
     decision_url: str | None = None
+
+
+class DecisionDetail(BaseModel):
+    """Structured detail for a decision linked from an agenda item."""
+
+    agenda_title: str = ""
+    title: str
+    decision: str = ""
+    reasons: str = ""
+    made_by: str = ""
+    date: str = ""
+
+
+class RetrievalBundle(BaseModel):
+    """Run-scoped retrieval outputs for downstream analysis and observability."""
+
+    source_url: str | None = None
+    committees: list[Committee] = Field(default_factory=list)
+    meetings: list[Meeting] = Field(default_factory=list)
+    documents: list[MeetingDocument] = Field(default_factory=list)
+    agenda_items: list[AgendaItem] = Field(default_factory=list)
+    decisions: list[DecisionDetail] = Field(default_factory=list)
 
 
 class CouncilDocument(BaseModel):

@@ -1,8 +1,11 @@
 """Tests for the retriever agent parsers."""
 
+import asyncio
+
 from src.agents.retriever import (
     emit_event,
     extract_councillors_from_text,
+    fetch_meeting_detail,
     parse_agenda_items,
     parse_attendance,
     parse_committees,
@@ -10,7 +13,7 @@ from src.agents.retriever import (
     parse_meeting_documents,
     parse_meetings,
 )
-from src.models.documents import DocumentType
+from src.models.documents import DocumentType, Meeting
 
 
 class TestParseCommittees:
@@ -72,6 +75,16 @@ class TestParseMeetingDocuments:
         docs = parse_meeting_documents(meeting_detail_html, meeting_id=6439)
         assert len(docs) == 3
 
+    def test_document_urls_absolute(self, meeting_detail_html):
+        docs = parse_meeting_documents(meeting_detail_html, meeting_id=6439)
+        assert all(doc.url.startswith("https://committees.westminster.gov.uk/") for doc in docs)
+
+    def test_strips_pdf_suffix_from_titles(self, meeting_detail_html):
+        docs = parse_meeting_documents(meeting_detail_html, meeting_id=6439)
+        assert docs[0].title == "Agenda frontsheet"
+        assert docs[1].title == "Printed minutes"
+        assert docs[2].title == "Printed decisions"
+
     def test_classifies_minutes(self, meeting_detail_html):
         docs = parse_meeting_documents(meeting_detail_html, meeting_id=6439)
         minutes = [d for d in docs if d.doc_type == DocumentType.MINUTES]
@@ -86,6 +99,24 @@ class TestParseMeetingDocuments:
         docs = parse_meeting_documents(meeting_detail_html, meeting_id=6439)
         agendas = [d for d in docs if d.doc_type == DocumentType.AGENDA]
         assert len(agendas) == 1
+
+    def test_fetch_meeting_detail_sets_fetched_at(self, monkeypatch, meeting_detail_html):
+        async def fake_fetch_page(url):
+            return meeting_detail_html
+
+        monkeypatch.setattr("src.agents.retriever.fetch_page", fake_fetch_page)
+        meeting = Meeting(
+            committee_id=130,
+            committee_name="Cabinet",
+            meeting_id=6439,
+            date="31 Mar 2020 6.30 pm",
+            url="https://committees.westminster.gov.uk/ieListDocuments.aspx?CId=130&MId=6439",
+        )
+
+        docs, _ = asyncio.run(fetch_meeting_detail(meeting))
+
+        assert docs
+        assert all(doc.fetched_at is not None for doc in docs)
 
 
 class TestParseAgendaItems:
