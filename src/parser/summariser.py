@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -10,7 +12,7 @@ from openai import OpenAI
 
 from src.models.documents import AgendaItem, VoterSummary
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 UPCOMING_SYSTEM_PROMPT = """\
 You are a civic information assistant for Westminster Council voters.
@@ -49,6 +51,33 @@ Respond with JSON containing:
 - "status": Either "upcoming" or "decided"."""
 
 
+VOTER_BRIEF_SYSTEM_PROMPT = """\
+You are a civic information assistant for Westminster Council voters.
+You will receive details of a council agenda item. Explain it for residents in plain English.
+
+Respond with JSON containing:
+- "summary": A clear 2-3 sentence plain-English summary.
+- "why_it_matters": One short paragraph explaining why residents should care.
+- "pros": A list of 2-4 arguments in favour from a resident's perspective.
+- "cons": A list of 2-4 arguments against from a resident's perspective.
+- "what_to_watch": One sentence on what residents should watch for next.
+- "councillors": A list of any councillor names mentioned (empty list if none).
+- "notify_voters": true if this item should be surfaced prominently to voters, else false."""
+
+
+def _resolve_openai_api_key() -> str | None:
+    return os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_KEY")
+
+
+def _get_client(client: OpenAI | None) -> OpenAI:
+    if client is not None:
+        return client
+    api_key = _resolve_openai_api_key()
+    if api_key:
+        return OpenAI(api_key=api_key)
+    return OpenAI()
+
+
 def generate_pros_cons(
     item: AgendaItem,
     is_upcoming: bool = False,
@@ -56,7 +85,7 @@ def generate_pros_cons(
     model: str = "gpt-4o",
 ) -> dict:
     """Generate pros and cons for a single agenda item."""
-    client = client or OpenAI()
+    client = _get_client(client)
     user_prompt = _build_prompt(item, is_upcoming)
 
     response = client.chat.completions.create(
@@ -77,6 +106,38 @@ def generate_pros_cons(
         "cons": result.get("cons", []),
         "councillors": result.get("councillors", []),
         "status": result.get("status", "upcoming" if is_upcoming else "decided"),
+    }
+
+
+def generate_voter_brief(
+    item: AgendaItem,
+    is_upcoming: bool = False,
+    client: OpenAI | None = None,
+    model: str = "gpt-4o",
+) -> dict:
+    """Generate a voter-facing brief for one agenda item."""
+    client = _get_client(client)
+    user_prompt = _build_prompt(item, is_upcoming)
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": VOTER_BRIEF_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        response_format={"type": "json_object"},
+    )
+
+    result = json.loads(response.choices[0].message.content)
+    return {
+        "summary": result.get("summary", ""),
+        "why_it_matters": result.get("why_it_matters", ""),
+        "pros": result.get("pros", []),
+        "cons": result.get("cons", []),
+        "what_to_watch": result.get("what_to_watch", ""),
+        "councillors": result.get("councillors", []),
+        "notify_voters": result.get("notify_voters", True),
+        "status": "upcoming" if is_upcoming else "decided",
     }
 
 
@@ -121,7 +182,7 @@ def summarise_item(
         client: OpenAI client (created if not provided).
         model: OpenAI model to use.
     """
-    client = client or OpenAI()
+    client = _get_client(client)
 
     system_prompt = UPCOMING_SYSTEM_PROMPT if is_upcoming else DECIDED_SYSTEM_PROMPT
     user_prompt = _build_prompt(item, is_upcoming)
