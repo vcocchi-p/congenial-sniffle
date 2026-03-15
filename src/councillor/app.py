@@ -254,7 +254,7 @@ with main_col:
             xaxis_title="Votes",
             yaxis=dict(autorange="reversed"),
         )
-        st.plotly_chart(fig_engagement, use_container_width=True)
+        st.plotly_chart(fig_engagement, use_container_width=True, key="chart_engagement")
 
     st.markdown("---")
 
@@ -294,7 +294,7 @@ with main_col:
                 height=280,
                 showlegend=False,
             )
-            st.plotly_chart(fig_donut, use_container_width=True)
+            st.plotly_chart(fig_donut, use_container_width=True, key=f"donut_{item['item_key']}")
 
             if is_contentious:
                 st.warning(
