@@ -91,6 +91,12 @@ st.subheader("Engagement by Agenda Item")
 
 titles = [i["item_title"][:60] + ("…" if len(i["item_title"]) > 60 else "") for i in items]
 
+def _pct_labels(counts: list[int], totals: list[int]) -> list[str]:
+    return [f"{c / t * 100:.0f}%" if t else "" for c, t in zip(counts, totals)]
+
+
+totals = [i["total"] for i in items]
+
 fig_engagement = go.Figure()
 fig_engagement.add_trace(go.Bar(
     name="For",
@@ -98,6 +104,10 @@ fig_engagement.add_trace(go.Bar(
     x=[i["for"] for i in items],
     orientation="h",
     marker_color="#2ecc71",
+    text=_pct_labels([i["for"] for i in items], totals),
+    textposition="inside",
+    insidetextanchor="middle",
+    textfont=dict(color="white", size=12),
 ))
 fig_engagement.add_trace(go.Bar(
     name="Against",
@@ -105,6 +115,10 @@ fig_engagement.add_trace(go.Bar(
     x=[i["against"] for i in items],
     orientation="h",
     marker_color="#e74c3c",
+    text=_pct_labels([i["against"] for i in items], totals),
+    textposition="inside",
+    insidetextanchor="middle",
+    textfont=dict(color="white", size=12),
 ))
 fig_engagement.add_trace(go.Bar(
     name="Abstain",
@@ -112,6 +126,10 @@ fig_engagement.add_trace(go.Bar(
     x=[i["abstain"] for i in items],
     orientation="h",
     marker_color="#95a5a6",
+    text=_pct_labels([i["abstain"] for i in items], totals),
+    textposition="inside",
+    insidetextanchor="middle",
+    textfont=dict(color="white", size=12),
 ))
 fig_engagement.update_layout(
     barmode="stack",
