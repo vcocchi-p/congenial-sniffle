@@ -15,6 +15,7 @@ from dotenv import load_dotenv  # noqa: E402
 
 from src.analysis.db import load_item_analysis  # noqa: E402
 from src.analysis.relevance import is_voter_relevant_agenda_item  # noqa: E402
+from src.demo_scope import get_featured_meeting_id  # noqa: E402
 from src.models.documents import AgendaItem, Meeting  # noqa: E402
 from src.voter.db import (  # noqa: E402
     get_agenda_items,
@@ -218,6 +219,12 @@ def show_content() -> None:
         return
 
     meeting_lookup: dict[int, Meeting] = {meeting.meeting_id: meeting for meeting in meetings}
+    featured_meeting_id = get_featured_meeting_id(meetings)
+    if featured_meeting_id is not None:
+        st.info(
+            "Demo focus is active: showing the Cabinet meeting on 23 February 2026 as the "
+            "featured voter briefing."
+        )
 
     upcoming_items = []
     past_items = []
@@ -231,13 +238,17 @@ def show_content() -> None:
             continue
 
         meeting = meeting_lookup.get(item.meeting_id)
+        if featured_meeting_id is not None:
+            if item.meeting_id == featured_meeting_id:
+                upcoming_items.append((item, meeting))
+            continue
+
         is_upcoming_item = is_demo_upcoming(item, meeting)
         persisted_analysis = _get_persisted_analysis(item, is_upcoming_item)
         if persisted_analysis is not None and not persisted_analysis.get("notify_voters", True):
             continue
         if demo_mode_active and persisted_analysis is None:
             continue
-
         if is_upcoming_item:
             upcoming_items.append((item, meeting))
         else:
@@ -256,7 +267,7 @@ def show_content() -> None:
 
         st.markdown("---")
 
-    if demo_mode_active:
+    if featured_meeting_id is not None or demo_mode_active:
         st.subheader(f"Upcoming ({len(upcoming_items)})")
         if not upcoming_items:
             st.info("No upcoming decisions found.")

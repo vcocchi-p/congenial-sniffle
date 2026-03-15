@@ -11,7 +11,8 @@ import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
 
-from src.councillor.notify import send_whatsapp
+from src.councillor.notify import is_whatsapp_available, send_whatsapp
+from src.demo_scope import get_featured_meeting_id, is_voter_relevant_title
 from src.voter.db import (
     get_agenda_items,
     get_item_tallies_for_meeting,
@@ -85,7 +86,11 @@ if use_demo:
         st.caption(f"{len(demo_meetings)} meeting(s) with votes")
 
     selected_meta = next(m for m in demo_meetings if m["meeting_id"] == selected_id)
-    items = get_item_tallies_for_meeting(selected_id, use_demo=True)
+    items = [
+        item
+        for item in get_item_tallies_for_meeting(selected_id, use_demo=True)
+        if is_voter_relevant_title(item["item_title"])
+    ]
 
     col1, col2, col3 = st.columns(3)
     col1.metric("👥 Unique Voters", selected_meta["unique_voters"])
@@ -104,6 +109,13 @@ else:
         st.info("No meetings found in the latest pipeline run.")
         st.stop()
 
+    featured_meeting_id = get_featured_meeting_id(all_meetings)
+    if featured_meeting_id is not None:
+        all_meetings = [m for m in all_meetings if m["meeting_id"] == featured_meeting_id]
+        st.info(
+            "Demo focus is active: showing the Cabinet meeting on 23 February 2026 only."
+        )
+
     with st.sidebar:
         st.header("📅 Select Meeting")
         meeting_labels = {
@@ -120,14 +132,25 @@ else:
         st.caption(f"{len(all_meetings)} meeting(s) loaded")
         st.markdown("---")
         st.subheader("📣 Notify Voters")
+        if not is_whatsapp_available():
+            st.caption("WhatsApp notifications unavailable until the Twilio dependency is installed.")
         selected_label = meeting_labels.get(selected_id, selected_id)
+        default_notify_msg = (
+            f"New council meeting coming up: {selected_label}. "
+            "Log in to see what it's about and have your say."
+        )
         notify_msg = st.text_area(
             "Message",
-            value=f"New council meeting coming up: {selected_label}. Log in to see what it's about and have your say.",
+            value=default_notify_msg,
             height=100,
             key="notify_msg",
         )
-        if st.button("Send WhatsApp notification", type="primary", key="notify_btn"):
+        if st.button(
+            "Send WhatsApp notification",
+            type="primary",
+            key="notify_btn",
+            disabled=not is_whatsapp_available(),
+        ):
             try:
                 sid = send_whatsapp(notify_msg)
                 st.success(f"Sent! SID: {sid}")
@@ -137,7 +160,11 @@ else:
                 st.error(f"Failed to send: {e}")
 
     all_items = get_agenda_items(run_id)
-    meeting_items = [i for i in all_items if i["meeting_id"] == selected_id]
+    meeting_items = [
+        i
+        for i in all_items
+        if i["meeting_id"] == selected_id and is_voter_relevant_title(i["title"])
+    ]
     items = []
     for i in meeting_items:
         tallies = get_vote_tallies(i["item_key"], use_demo=False, use_populated=use_populated)
@@ -177,6 +204,7 @@ with feed_col:
     @st.fragment(run_every=2)
     def live_vote_feed():
         recent = get_recent_votes(limit=30, use_demo=use_demo, use_populated=use_populated)
+        recent = [vote for vote in recent if vote["item_key"].startswith(f"{selected_id}-")]
         if not recent:
             st.caption("No votes yet.")
             return
