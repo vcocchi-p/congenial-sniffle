@@ -10,6 +10,8 @@ dependencies = [
     "httpx",
     "beautifulsoup4",
     "pydantic",
+    "qrcode[pil]",
+    "python-dotenv",
 ]
 
 [project.optional-dependencies]
