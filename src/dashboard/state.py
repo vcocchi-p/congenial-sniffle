@@ -29,6 +29,11 @@ from src.dashboard.constants import (
 )
 from src.dashboard.simulation import next_run_id
 from src.models.documents import AgentEvent, MeetingDocument, RetrievalBundle
+from src.retrieval.db import (
+    record_retrieval_event,
+    record_retrieval_run_result,
+    record_retrieval_run_started,
+)
 
 T = TypeVar("T")
 
@@ -326,10 +331,17 @@ def start_retrieval_run(
     state[DASHBOARD_RUN_EVENTS_KEY][run_id] = []
     state[DASHBOARD_RUN_DOCUMENTS_KEY][run_id] = []
     state[DASHBOARD_RUN_BUNDLES_KEY][run_id] = RetrievalBundle(source_url=normalized_url)
+    record_retrieval_run_started(
+        run_id,
+        source_url=normalized_url,
+        trigger_type="manual",
+        requested_at=requested_at,
+    )
 
     def capture(event: AgentEvent) -> None:
         normalized_event = _normalize_retrieval_event(event, run_id, normalized_url)
         state[DASHBOARD_RUN_EVENTS_KEY][run_id].append(normalized_event)
+        record_retrieval_event(run_id, normalized_event)
         if on_event is not None:
             on_event(normalized_event)
 
@@ -344,6 +356,22 @@ def start_retrieval_run(
         state[DASHBOARD_RUN_BUNDLES_KEY][run_id] = bundle
         state[DASHBOARD_RUN_DOCUMENTS_KEY][run_id] = list(bundle.documents)
         _append_run_once(state, run_id)
+        summary = summarize_run(
+            run_id,
+            state[DASHBOARD_RUN_EVENTS_KEY][run_id],
+            state[DASHBOARD_RUN_DOCUMENTS_KEY][run_id],
+            bundle,
+        )
+        if summary is not None:
+            record_retrieval_run_result(
+                run_id,
+                status=summary.status,
+                completed_at=summary.completed_at,
+                latest_message=summary.latest_message,
+                documents_discovered=summary.documents_discovered,
+                documents_fetched=summary.documents_fetched,
+                bundle=bundle,
+            )
         request = PipelineRequest(
             request_id=request.request_id,
             run_id=run_id,
@@ -356,9 +384,27 @@ def start_retrieval_run(
     except Exception as exc:
         error_event = _build_dashboard_error_event(run_id, normalized_url, str(exc))
         state[DASHBOARD_RUN_EVENTS_KEY][run_id].append(error_event)
+        record_retrieval_event(run_id, error_event)
         if on_event is not None:
             on_event(error_event)
         _append_run_once(state, run_id)
+        summary = summarize_run(
+            run_id,
+            state[DASHBOARD_RUN_EVENTS_KEY][run_id],
+            state[DASHBOARD_RUN_DOCUMENTS_KEY][run_id],
+            state[DASHBOARD_RUN_BUNDLES_KEY][run_id],
+        )
+        if summary is not None:
+            record_retrieval_run_result(
+                run_id,
+                status="error",
+                completed_at=summary.completed_at,
+                latest_message=summary.latest_message,
+                documents_discovered=summary.documents_discovered,
+                documents_fetched=summary.documents_fetched,
+                error_message=str(exc),
+                bundle=None,
+            )
         request = PipelineRequest(
             request_id=request.request_id,
             run_id=run_id,
