@@ -7,11 +7,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import io
+import io  # noqa: E402
 
-import qrcode
-import streamlit as st
-from dotenv import load_dotenv
+import qrcode  # noqa: E402
+import streamlit as st  # noqa: E402
+from dotenv import load_dotenv  # noqa: E402
 
 from src.analysis.db import load_item_analysis  # noqa: E402
 from src.analysis.relevance import is_voter_relevant_agenda_item  # noqa: E402
@@ -31,27 +31,18 @@ from src.voter.presentation import is_demo_mode_active, is_demo_upcoming  # noqa
 load_dotenv()
 init_db()
 
-# ---------------------------------------------------------------------------
-# Page config
-# ---------------------------------------------------------------------------
 st.set_page_config(page_title="The Quorum — Have Your Say", page_icon="🗳️", layout="wide")
 
-# ---------------------------------------------------------------------------
-# Session state defaults
-# ---------------------------------------------------------------------------
 if "voter_username" not in st.session_state:
     st.session_state.voter_username = None
 if "votes" not in st.session_state:
-    st.session_state.votes = {}  # {item_key: {"vote": "for"|"against"|"abstain", "user": str}}
+    st.session_state.votes = {}  # {item_key: {"vote": "for"|"against"|"abstain", "title": str}}
 if "pros_cons_cache" not in st.session_state:
-    st.session_state.pros_cons_cache = {}  # {item_key: pros_cons_dict}
+    st.session_state.pros_cons_cache = {}  # {item_key: persisted analysis or None}
 if "submitted_votes" not in st.session_state:
     st.session_state.submitted_votes = {}
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 def _item_key(item: AgendaItem) -> str:
     return f"{item.meeting_id}-{item.item_number}"
 
@@ -59,11 +50,10 @@ def _item_key(item: AgendaItem) -> str:
 def _get_public_url() -> str:
     """Get the public URL from ngrok, falling back to localhost."""
     try:
+        import json
         import urllib.request
 
         resp = urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=2)
-        import json
-
         data = json.loads(resp.read())
         for tunnel in data.get("tunnels", []):
             if tunnel.get("proto") == "https":
@@ -140,23 +130,7 @@ def _get_persisted_analysis(item: AgendaItem, is_upcoming: bool) -> dict | None:
     return st.session_state.pros_cons_cache[key]
 
 
-# ---------------------------------------------------------------------------
-# Signup page
-# ---------------------------------------------------------------------------
-def show_signup():
-    st.markdown(
-        """
-        <style>
-        .signup-container {
-            max-width: 500px;
-            margin: 0 auto;
-            padding: 2rem;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
+def show_signup() -> None:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.title("🗳️ The Quorum")
@@ -165,7 +139,7 @@ def show_signup():
 
         st.markdown(
             "**Welcome!** Sign up to browse upcoming council decisions, "
-            "see the pros and cons, and cast your vote."
+            "see the pre-prepared analysis, and cast your vote."
         )
 
         username = st.text_input(
@@ -179,7 +153,6 @@ def show_signup():
             if not name:
                 st.error("Please enter a username.")
             elif user_exists(name):
-                # Returning user — just log them in
                 st.session_state.voter_username = name
                 st.rerun()
             else:
@@ -191,18 +164,12 @@ def show_signup():
 
         st.markdown("---")
         st.caption("Share this page with others:")
-
-        # QR code for sharing — auto-detects ngrok URL
         public_url = _get_public_url()
         qr_bytes = _generate_qr(public_url)
         st.image(qr_bytes, width=200, caption=public_url)
 
 
-# ---------------------------------------------------------------------------
-# Main content page
-# ---------------------------------------------------------------------------
-def show_content():
-    # Header
+def show_content() -> None:
     col_title, col_user = st.columns([4, 1])
     with col_title:
         st.title("🗳️ The Quorum")
@@ -212,7 +179,6 @@ def show_content():
             st.session_state.voter_username = None
             st.rerun()
 
-    # Submit all votes button
     if st.session_state.votes:
         col_submit, col_count = st.columns([3, 1])
         with col_submit:
@@ -231,7 +197,8 @@ def show_content():
 
     st.markdown("---")
 
-    if is_demo_mode_active():
+    demo_mode_active = is_demo_mode_active()
+    if demo_mode_active:
         st.info(
             "Demo mode is active: the selected meeting is being presented as upcoming so "
             "voters can review the pre-meeting analysis."
@@ -239,21 +206,19 @@ def show_content():
 
     result = _load_council_data()
     if result is None:
-        st.info("We need to fetch the latest council data. This may take a minute.")
+        st.info(
+            "No council data available yet. "
+            "The pipeline needs to run before decisions can be shown here."
+        )
         return
 
     meetings, agenda_items = result
-
     if not agenda_items:
         st.warning("No agenda items found in the latest pipeline run.")
         return
 
-    # Build a meeting lookup
-    meeting_lookup: dict[int, Meeting] = {m.meeting_id: m for m in meetings}
+    meeting_lookup: dict[int, Meeting] = {meeting.meeting_id: meeting for meeting in meetings}
 
-    demo_mode_active = is_demo_mode_active()
-
-    # Separate upcoming and past items, deduplicating by item key
     upcoming_items = []
     past_items = []
     seen: set[str] = set()
@@ -264,6 +229,7 @@ def show_content():
         seen.add(key)
         if not is_voter_relevant_agenda_item(item):
             continue
+
         meeting = meeting_lookup.get(item.meeting_id)
         is_upcoming_item = is_demo_upcoming(item, meeting)
         persisted_analysis = _get_persisted_analysis(item, is_upcoming_item)
@@ -271,23 +237,24 @@ def show_content():
             continue
         if demo_mode_active and persisted_analysis is None:
             continue
+
         if is_upcoming_item:
             upcoming_items.append((item, meeting))
         else:
             past_items.append((item, meeting))
 
-    # Sidebar with vote tally
     with st.sidebar:
         st.header("📊 Your Votes")
-        vote_count = len(st.session_state.votes)
-        st.metric("Votes Cast", vote_count)
+        st.metric("Votes Cast", len(st.session_state.votes))
         st.markdown("---")
 
         if st.session_state.votes:
+            vote_label = {"for": "👍 For", "against": "👎 Against", "abstain": "🤷 Abstain"}
             for key, vote_data in st.session_state.votes.items():
-                vote_label = {"for": "👍 For", "against": "👎 Against", "abstain": "🤷 Abstain"}
                 title = vote_data.get("title", key)[:40]
                 st.markdown(f"- **{title}**: {vote_label[vote_data['vote']]}")
+
+        st.markdown("---")
 
     if demo_mode_active:
         st.subheader(f"Upcoming ({len(upcoming_items)})")
@@ -316,45 +283,43 @@ def show_content():
 
 def _render_items(
     items: list[tuple[AgendaItem, Meeting | None]], is_upcoming: bool, prefix: str = ""
-):
-    """Render agenda items with pros/cons and vote buttons."""
+) -> None:
+    """Render agenda items with persisted analysis and vote buttons."""
     for item, meeting in items:
         key = _item_key(item)
         committee_name = meeting.committee_name if meeting else "Unknown Committee"
         meeting_date = meeting.date if meeting else ""
 
         with st.expander(f"**{item.title}** — {committee_name} ({meeting_date})", expanded=False):
-            # Show basic info
             if item.description:
                 st.markdown(f"*{item.description}*")
 
             analysis = _get_persisted_analysis(item, is_upcoming)
-            if analysis is not None:
-                st.markdown(f"**Summary:** {analysis['summary']}")
-                if analysis.get("why_it_matters"):
-                    st.markdown(f"**Why it matters:** {analysis['why_it_matters']}")
-
-                col_pro, col_con = st.columns(2)
-                with col_pro:
-                    st.markdown("#### ✅ Arguments For")
-                    for pro in analysis["pros"]:
-                        st.markdown(f"- {pro}")
-                with col_con:
-                    st.markdown("#### ❌ Arguments Against")
-                    for con in analysis["cons"]:
-                        st.markdown(f"- {con}")
-
-                if analysis.get("councillors"):
-                    st.markdown(f"**Councillors mentioned:** {', '.join(analysis['councillors'])}")
-                if analysis.get("what_to_watch"):
-                    st.markdown(f"**What to watch:** {analysis['what_to_watch']}")
-            else:
+            if analysis is None:
                 st.info("Analysis is not ready for this item yet.")
                 continue
 
+            st.markdown(f"**Summary:** {analysis['summary']}")
+            if analysis.get("why_it_matters"):
+                st.markdown(f"**Why it matters:** {analysis['why_it_matters']}")
+
+            col_pro, col_con = st.columns(2)
+            with col_pro:
+                st.markdown("#### ✅ Arguments For")
+                for pro in analysis["pros"]:
+                    st.markdown(f"- {pro}")
+            with col_con:
+                st.markdown("#### ❌ Arguments Against")
+                for con in analysis["cons"]:
+                    st.markdown(f"- {con}")
+
+            if analysis.get("councillors"):
+                st.markdown(f"**Councillors mentioned:** {', '.join(analysis['councillors'])}")
+            if analysis.get("what_to_watch"):
+                st.markdown(f"**What to watch:** {analysis['what_to_watch']}")
+
             st.markdown("---")
 
-            # Show current tallies from DB
             tallies = get_vote_tallies(key)
             total = tallies["for"] + tallies["against"] + tallies["abstain"]
             if total > 0:
@@ -366,9 +331,7 @@ def _render_items(
                 with t_abstain:
                     st.metric("🤷 Abstain", tallies["abstain"])
 
-            # Vote buttons
             existing_vote = st.session_state.votes.get(key)
-
             if existing_vote:
                 vote_label = {"for": "👍 For", "against": "👎 Against", "abstain": "🤷 Abstain"}
                 st.success(f"You voted: **{vote_label[existing_vote['vote']]}**")
@@ -383,37 +346,24 @@ def _render_items(
                     if st.button(
                         "👍 Vote For", key=f"for-{prefix}-{key}", use_container_width=True
                     ):
-                        st.session_state.votes[key] = {
-                            "vote": "for",
-                            "user": st.session_state.voter_username,
-                            "title": item.title,
-                        }
+                        st.session_state.votes[key] = {"vote": "for", "title": item.title}
                         st.rerun()
                 with col_against:
                     if st.button(
-                        "👎 Vote Against", key=f"against-{prefix}-{key}", use_container_width=True
+                        "👎 Vote Against",
+                        key=f"against-{prefix}-{key}",
+                        use_container_width=True,
                     ):
-                        st.session_state.votes[key] = {
-                            "vote": "against",
-                            "user": st.session_state.voter_username,
-                            "title": item.title,
-                        }
+                        st.session_state.votes[key] = {"vote": "against", "title": item.title}
                         st.rerun()
                 with col_abstain:
                     if st.button(
                         "🤷 Abstain", key=f"abstain-{prefix}-{key}", use_container_width=True
                     ):
-                        st.session_state.votes[key] = {
-                            "vote": "abstain",
-                            "user": st.session_state.voter_username,
-                            "title": item.title,
-                        }
+                        st.session_state.votes[key] = {"vote": "abstain", "title": item.title}
                         st.rerun()
 
 
-# ---------------------------------------------------------------------------
-# Router
-# ---------------------------------------------------------------------------
 if st.session_state.voter_username is None:
     show_signup()
 else:
