@@ -1,0 +1,27 @@
+The Quorum
+
+
+Innovation - not just another dashboard
+
+
+
+Is it actually a problem?
+
+Production Ready - needs public APIs
+
+
+Agents:
+1-Context gathering
+Fetch unstructured data
+
+
+2-Send a text message
+Summarise vote, context for constituents
+Explain pros, cons
+
+3-Converse with the constituent further if needed
+
+4-Gather the vote (not an agent but an app)
+
+5-Let the councillor know the results
+
