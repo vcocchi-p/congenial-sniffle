@@ -11,8 +11,8 @@ import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
 
-from src.demo_scope import get_featured_meeting_id, is_voter_relevant_title
 from src.councillor.notify import send_whatsapp
+from src.demo_scope import get_featured_meeting_id, is_voter_relevant_title
 from src.voter.db import (
     get_agenda_items,
     get_item_tallies_for_meeting,
@@ -133,9 +133,13 @@ else:
         st.markdown("---")
         st.subheader("📣 Notify Voters")
         selected_label = meeting_labels.get(selected_id, selected_id)
+        default_notify_msg = (
+            f"New council meeting coming up: {selected_label}. "
+            "Log in to see what it's about and have your say."
+        )
         notify_msg = st.text_area(
             "Message",
-            value=f"New council meeting coming up: {selected_label}. Log in to see what it's about and have your say.",
+            value=default_notify_msg,
             height=100,
             key="notify_msg",
         )
