@@ -13,6 +13,7 @@ dependencies = [
     "qrcode[pil]",
     "python-dotenv",
     "plotly",
+    "twilio",
 ]
 
 [project.optional-dependencies]

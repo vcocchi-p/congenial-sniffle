@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
 
+from src.councillor.notify import send_whatsapp
 from src.voter.db import (
     get_agenda_items,
     get_item_tallies_for_meeting,
@@ -117,6 +118,23 @@ else:
         )
         st.markdown("---")
         st.caption(f"{len(all_meetings)} meeting(s) loaded")
+        st.markdown("---")
+        st.subheader("📣 Notify Voters")
+        selected_label = meeting_labels.get(selected_id, selected_id)
+        notify_msg = st.text_area(
+            "Message",
+            value=f"New council meeting coming up: {selected_label}. Log in to see what it's about and have your say.",
+            height=100,
+            key="notify_msg",
+        )
+        if st.button("Send WhatsApp notification", type="primary", key="notify_btn"):
+            try:
+                sid = send_whatsapp(notify_msg)
+                st.success(f"Sent! SID: {sid}")
+            except KeyError as e:
+                st.error(f"Missing env var: {e}. Add it to your .env file.")
+            except Exception as e:
+                st.error(f"Failed to send: {e}")
 
     all_items = get_agenda_items(run_id)
     meeting_items = [i for i in all_items if i["meeting_id"] == selected_id]
