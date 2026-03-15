@@ -30,6 +30,7 @@ from src.dashboard.constants import (
 from src.dashboard.simulation import next_run_id
 from src.models.documents import AgentEvent, MeetingDocument, RetrievalBundle
 from src.retrieval.db import (
+    get_latest_run_sequence,
     record_retrieval_event,
     record_retrieval_run_result,
     record_retrieval_run_started,
@@ -308,7 +309,10 @@ def start_retrieval_run(
 ) -> PipelineRequest:
     initialize_state(state)
     normalized_url = _validate_source_url(source_url)
-    run_sequence = int(state.get(DASHBOARD_RUN_SEQUENCE_KEY, 0)) + 1
+    run_sequence = max(
+        int(state.get(DASHBOARD_RUN_SEQUENCE_KEY, 0)),
+        get_latest_run_sequence(),
+    ) + 1
     request_sequence = int(state.get(DASHBOARD_REQUEST_SEQUENCE_KEY, 0)) + 1
     run_id = next_run_id(run_sequence)
     requested_at = datetime.now(timezone.utc)

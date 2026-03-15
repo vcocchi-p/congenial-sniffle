@@ -31,7 +31,9 @@ from src.models.documents import (
 )
 from src.retrieval import db as retrieval_db
 from src.retrieval.db import (
+    get_latest_run_sequence,
     list_retrieval_runs,
+    record_retrieval_run_started,
 )
 from src.retrieval.db import (
     load_retrieval_bundle as load_persisted_bundle,
@@ -211,3 +213,53 @@ def test_start_retrieval_run_rejects_invalid_url():
 
     with pytest.raises(ValueError):
         start_retrieval_run(state, "https://example.com/not-westminster")
+
+
+def test_start_retrieval_run_uses_persisted_run_sequence_after_restart():
+    state = {
+        "dashboard_run_events": {},
+        "dashboard_run_documents": {},
+        "dashboard_run_bundles": {},
+        "dashboard_run_order": [],
+        "dashboard_current_run_id": None,
+        "dashboard_selected_run_id": None,
+        "dashboard_run_sequence": 0,
+        "dashboard_summaries_generated": 0,
+        "dashboard_pipeline_requests": [],
+        "dashboard_request_sequence": 0,
+    }
+    requested_at = create_seeded_dashboard_data()["dashboard_run_events"]["run-003"][-1].timestamp
+    record_retrieval_run_started(
+        "run-007",
+        source_url="https://committees.westminster.gov.uk/ieListMeetings.aspx?CId=130&Year=0",
+        trigger_type="manual",
+        requested_at=requested_at,
+    )
+
+    async def fake_pipeline_runner(*, run_id, source_url, trigger_type, on_event):
+        on_event(
+            AgentEvent(
+                agent_name="retriever",
+                event_type="completed",
+                message="Completed fake retrieval",
+                timestamp=requested_at,
+                metadata={
+                    "run_id": run_id,
+                    "stage": "retrieval",
+                    "step_name": "completed",
+                    "source_url": source_url,
+                    "detail": "Fake run completed for unit tests.",
+                    "trigger_type": trigger_type,
+                },
+            )
+        )
+        return RetrievalBundle(source_url=source_url)
+
+    request = start_retrieval_run(
+        state,
+        "https://committees.westminster.gov.uk/ieListMeetings.aspx?CId=130&Year=0",
+        pipeline_runner=fake_pipeline_runner,
+    )
+
+    assert get_latest_run_sequence() == 8
+    assert request.run_id == "run-008"

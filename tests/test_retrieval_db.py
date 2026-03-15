@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from src.models.documents import (
 )
 from src.retrieval.db import (
     get_latest_run_id,
+    get_latest_run_sequence,
     init_retrieval_db,
     list_retrieval_runs,
     load_analysis_inputs,
@@ -93,6 +95,15 @@ def _sample_bundle() -> RetrievalBundle:
             )
         ],
     )
+
+
+def _count_rows(table: str, test_db: Path) -> int:
+    conn = sqlite3.connect(test_db)
+    try:
+        row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+        return int(row[0]) if row is not None else 0
+    finally:
+        conn.close()
 
 
 def test_run_event_and_bundle_round_trip():
@@ -196,3 +207,101 @@ def test_latest_bundle_and_analysis_inputs_use_newest_run():
     assert analysis_inputs[0].run_id == "run-101"
     assert analysis_inputs[0].item_key == "9002-5"
     assert analysis_inputs[0].is_upcoming is True
+
+
+def test_identical_runs_reuse_resource_versions(tmp_db: Path):
+    first_at = datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc)
+    second_at = datetime(2026, 3, 15, 13, 0, tzinfo=timezone.utc)
+    bundle = _sample_bundle()
+
+    for run_id, requested_at in (("run-100", first_at), ("run-101", second_at)):
+        record_retrieval_run_started(
+            run_id,
+            source_url=bundle.source_url,
+            trigger_type="manual",
+            requested_at=requested_at,
+        )
+        record_retrieval_run_result(
+            run_id,
+            status="completed",
+            completed_at=requested_at,
+            latest_message="Pipeline complete",
+            documents_discovered=1,
+            documents_fetched=1,
+            bundle=bundle,
+        )
+
+    assert _count_rows("retrieval_committee_versions", tmp_db) == 1
+    assert _count_rows("retrieval_meeting_versions", tmp_db) == 1
+    assert _count_rows("retrieval_attendee_versions", tmp_db) == 1
+    assert _count_rows("retrieval_document_versions", tmp_db) == 1
+    assert _count_rows("retrieval_agenda_item_versions", tmp_db) == 1
+    assert _count_rows("retrieval_decision_versions", tmp_db) == 1
+    assert _count_rows("retrieval_run_agenda_items", tmp_db) == 2
+
+
+def test_changed_resources_create_new_versions_but_preserve_old_runs(tmp_db: Path):
+    first_at = datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc)
+    second_at = datetime(2026, 3, 15, 13, 0, tzinfo=timezone.utc)
+    first_bundle = _sample_bundle()
+    second_bundle = _sample_bundle().model_copy(
+        update={
+            "agenda_items": [
+                _sample_bundle().agenda_items[0].model_copy(
+                    update={"title": "Budget Revised", "decision_text": "Budget updated"}
+                )
+            ]
+        }
+    )
+
+    record_retrieval_run_started(
+        "run-100",
+        source_url=first_bundle.source_url,
+        trigger_type="manual",
+        requested_at=first_at,
+    )
+    record_retrieval_run_result(
+        "run-100",
+        status="completed",
+        completed_at=first_at,
+        latest_message="First run complete",
+        documents_discovered=1,
+        documents_fetched=1,
+        bundle=first_bundle,
+    )
+    record_retrieval_run_started(
+        "run-101",
+        source_url=second_bundle.source_url,
+        trigger_type="manual",
+        requested_at=second_at,
+    )
+    record_retrieval_run_result(
+        "run-101",
+        status="completed",
+        completed_at=second_at,
+        latest_message="Second run complete",
+        documents_discovered=1,
+        documents_fetched=1,
+        bundle=second_bundle,
+    )
+
+    first_stored = load_retrieval_bundle("run-100")
+    second_stored = load_retrieval_bundle("run-101")
+
+    assert _count_rows("retrieval_agenda_item_versions", tmp_db) == 2
+    assert first_stored is not None
+    assert second_stored is not None
+    assert first_stored.agenda_items[0].title == "Budget"
+    assert second_stored.agenda_items[0].title == "Budget Revised"
+
+
+def test_latest_run_sequence_reads_from_persisted_runs():
+    first_at = datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc)
+    record_retrieval_run_started(
+        "run-007",
+        source_url="https://committees.westminster.gov.uk/ieListMeetings.aspx?CId=130&Year=0",
+        trigger_type="manual",
+        requested_at=first_at,
+    )
+
+    assert get_latest_run_sequence() == 7
