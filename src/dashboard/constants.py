@@ -14,6 +14,7 @@ PLACEHOLDER_STAGE_MESSAGE = "Future stage placeholder for monitoring."
 
 DASHBOARD_RUN_EVENTS_KEY = "dashboard_run_events"
 DASHBOARD_RUN_DOCUMENTS_KEY = "dashboard_run_documents"
+DASHBOARD_RUN_BUNDLES_KEY = "dashboard_run_bundles"
 DASHBOARD_RUN_ORDER_KEY = "dashboard_run_order"
 DASHBOARD_CURRENT_RUN_KEY = "dashboard_current_run_id"
 DASHBOARD_SELECTED_RUN_KEY = "dashboard_selected_run_id"
@@ -36,4 +37,7 @@ RETRIEVAL_METADATA_KEYS = (
     "progress_current",
     "progress_total",
     "detail",
+    "trigger_type",
 )
+
+RESOURCE_SECTIONS = ("committees", "meetings", "documents", "agenda_items", "decisions")

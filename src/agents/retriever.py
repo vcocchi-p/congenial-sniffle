@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from urllib.parse import urljoin
 
 import httpx
 from bs4 import BeautifulSoup
@@ -23,7 +24,6 @@ from src.models.documents import (
     AgentEvent,
     Committee,
     Councillor,
-    CouncilDocument,
     DocumentType,
     Meeting,
     MeetingDocument,
@@ -48,7 +48,14 @@ def _absolute(href: str) -> str:
     """Convert a relative href to an absolute URL."""
     if href.startswith("http"):
         return href
-    return f"{WESTMINSTER_BASE}/{href.lstrip('/')}"
+    return urljoin(f"{WESTMINSTER_BASE}/", href)
+
+
+def _clean_document_title(title: str) -> str:
+    """Strip trailing PDF size markers from meeting document link text."""
+    cleaned = re.sub(r"\s*\(PDF,\s*[\d.]+\s*[KMG]B\)\s*$", "", title, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*PDF\s*[\d.]+\s*[KMG]B\s*$", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -131,8 +138,8 @@ def parse_meeting_documents(html: str, meeting_id: int) -> list[MeetingDocument]
     docs = []
     for link in soup.select("a[href$='.pdf']"):
         href = link.get("href", "")
-        title = link.get_text(strip=True)
-        title_lower = title.lower()
+        raw_title = link.get_text(strip=True)
+        title_lower = raw_title.lower()
 
         if "minute" in title_lower:
             doc_type = DocumentType.MINUTES
@@ -144,7 +151,7 @@ def parse_meeting_documents(html: str, meeting_id: int) -> list[MeetingDocument]
         docs.append(
             MeetingDocument(
                 meeting_id=meeting_id,
-                title=title,
+                title=_clean_document_title(raw_title),
                 doc_type=doc_type,
                 url=_absolute(href),
             )
@@ -336,7 +343,11 @@ async def fetch_meetings(committee: Committee) -> list[Meeting]:
 async def fetch_meeting_detail(meeting: Meeting) -> tuple[list[MeetingDocument], list[AgendaItem]]:
     """Fetch documents and agenda items for a specific meeting."""
     html = await fetch_page(meeting.url)
-    docs = parse_meeting_documents(html, meeting.meeting_id)
+    fetched_at = datetime.now(timezone.utc)
+    docs = [
+        document.model_copy(update={"fetched_at": fetched_at})
+        for document in parse_meeting_documents(html, meeting.meeting_id)
+    ]
     items = parse_agenda_items(html, meeting.meeting_id)
     return docs, items
 

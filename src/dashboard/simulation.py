@@ -45,6 +45,7 @@ def _base_metadata(run_id: str, step_name: str) -> dict[str, object | None]:
         "progress_current": None,
         "progress_total": None,
         "detail": None,
+        "trigger_type": "manual",
     }
 
 
@@ -84,7 +85,11 @@ def _build_event(
     )
 
 
-def _build_document(run_id: str, fetched_at: datetime, blueprint: dict[str, object]) -> CouncilDocument:
+def _build_document(
+    run_id: str,
+    fetched_at: datetime,
+    blueprint: dict[str, object],
+) -> CouncilDocument:
     slug = str(blueprint["slug"])
     title = str(blueprint["title"])
     committee = str(blueprint["committee"])

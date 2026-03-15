@@ -11,19 +11,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.dashboard.components import (
+from src.dashboard.components import (  # noqa: E402
     render_documents_table,
     render_event_log,
     render_global_metrics,
     render_pipeline_requests,
+    render_resource_bundle,
     render_retrieval_overview,
     render_run_history,
     render_run_summary,
     render_stage_cards,
     render_trace_table,
 )
-from src.dashboard.constants import DEFAULT_SOURCE_URL
-from src.dashboard.state import (
+from src.dashboard.constants import DEFAULT_SOURCE_URL  # noqa: E402
+from src.dashboard.state import (  # noqa: E402
     get_current_run_id,
     get_run_summary,
     get_selected_run_id,
@@ -35,10 +36,11 @@ from src.dashboard.state import (
     load_recent_runs,
     load_retrieval_overview,
     load_retrieval_trace,
+    load_run_bundle,
     load_stage_snapshots,
     reset_demo_state,
     select_run,
-    submit_pipeline_request,
+    start_retrieval_run,
 )
 
 st.set_page_config(page_title="Westminster Pipeline Monitor", layout="wide")
@@ -53,19 +55,35 @@ with request_col:
         source_url = st.text_input(
             "Pipeline start URL",
             value=DEFAULT_SOURCE_URL,
-            help="Queue a manual start request for the retrieval pipeline.",
+            help="Start a real retrieval run from a Westminster committee URL.",
         )
-        submitted = st.form_submit_button("Queue Pipeline Start", type="primary")
+        submitted = st.form_submit_button("Start Retrieval Run", type="primary")
         if submitted:
-            try:
-                request = submit_pipeline_request(st.session_state, source_url)
-            except ValueError as exc:
-                st.error(str(exc))
-            else:
-                st.success(
-                    f"Queued `{request.request_id}` for `{request.source_url}`. "
-                    "This branch records the request and will hand it to the live retrieval agent later."
-                )
+            event_placeholder = st.empty()
+            with st.status("Running retrieval pipeline...", expanded=True) as status:
+                def _write_event(event):
+                    status.write(f"{event.timestamp:%H:%M:%S} | {event.message}")
+
+                try:
+                    request = start_retrieval_run(
+                        st.session_state,
+                        source_url,
+                        on_event=_write_event,
+                    )
+                except ValueError as exc:
+                    status.update(label="Retrieval start rejected", state="error")
+                    st.error(str(exc))
+                except Exception as exc:
+                    status.update(label="Retrieval run failed", state="error")
+                    st.error(str(exc))
+                else:
+                    status.update(
+                        label=f"Retrieval run {request.run_id} completed",
+                        state="complete",
+                    )
+                    event_placeholder.success(
+                        f"Completed `{request.run_id}` from `{request.source_url}`."
+                    )
 with reset_col:
     if st.button("Reset Demo State", use_container_width=True):
         reset_demo_state(st.session_state)
@@ -78,7 +96,7 @@ st.divider()
 render_global_metrics(load_global_metrics(st.session_state))
 
 st.divider()
-st.subheader("Queued Pipeline Starts")
+st.subheader("Retrieval Start History")
 render_pipeline_requests(load_pipeline_requests(st.session_state))
 
 st.divider()
@@ -93,8 +111,8 @@ if current_run_summary is not None:
     render_run_summary(current_run_summary, history_mode=False)
 else:
     st.info(
-        "No live retrieval run is active. New URLs are queued here until the retrieval agent "
-        "integration is ready."
+        "No live retrieval run is active. Start a retrieval run above to populate the dashboard "
+        "from the real pipeline."
     )
 render_retrieval_overview(current_overview)
 
@@ -130,6 +148,9 @@ if recent_runs:
 
     st.markdown("**Fetched Documents**")
     render_documents_table(load_documents(st.session_state, selected_run_id))
+
+    st.markdown("**Retrieved Resource Bundle**")
+    render_resource_bundle(load_run_bundle(st.session_state, selected_run_id))
 else:
     st.info("No historical retrieval runs are available yet.")
 

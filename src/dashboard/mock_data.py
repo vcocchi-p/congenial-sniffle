@@ -9,6 +9,7 @@ from src.dashboard.constants import (
     DASHBOARD_CURRENT_RUN_KEY,
     DASHBOARD_PIPELINE_REQUESTS_KEY,
     DASHBOARD_REQUEST_SEQUENCE_KEY,
+    DASHBOARD_RUN_BUNDLES_KEY,
     DASHBOARD_RUN_DOCUMENTS_KEY,
     DASHBOARD_RUN_EVENTS_KEY,
     DASHBOARD_RUN_ORDER_KEY,
@@ -43,6 +44,7 @@ def create_seeded_dashboard_data() -> dict[str, Any]:
     return {
         DASHBOARD_RUN_EVENTS_KEY: run_events,
         DASHBOARD_RUN_DOCUMENTS_KEY: run_documents,
+        DASHBOARD_RUN_BUNDLES_KEY: {},
         DASHBOARD_RUN_ORDER_KEY: run_order,
         DASHBOARD_CURRENT_RUN_KEY: None,
         DASHBOARD_SELECTED_RUN_KEY: current_run_id,
