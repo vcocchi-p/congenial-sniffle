@@ -11,7 +11,12 @@ import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
 
-from src.voter.db import get_item_tallies_for_meeting, get_meetings_with_votes, init_db
+from src.voter.db import (
+    get_item_tallies_for_meeting,
+    get_meetings_with_votes,
+    get_recent_votes,
+    init_db,
+)
 
 load_dotenv()
 init_db()
@@ -85,104 +90,162 @@ if not items:
     st.stop()
 
 # ---------------------------------------------------------------------------
-# Engagement overview — horizontal bar chart
+# Main content + live feed side by side
 # ---------------------------------------------------------------------------
-st.subheader("Engagement by Agenda Item")
+main_col, feed_col = st.columns([3, 1])
 
-titles = [i["item_title"][:60] + ("…" if len(i["item_title"]) > 60 else "") for i in items]
+with feed_col:
+    st.subheader("🔴 Live Feed")
 
-def _pct_labels(counts: list[int], totals: list[int]) -> list[str]:
-    return [f"{c / t * 100:.0f}%" if t else "" for c, t in zip(counts, totals)]
+    _VOTE_ICON = {"for": "✅", "against": "❌", "abstain": "🤷"}
+    _VOTE_COLOR = {"for": "#2ecc71", "against": "#e74c3c", "abstain": "#95a5a6"}
 
+    @st.fragment(run_every=2)
+    def live_vote_feed():
+        recent = get_recent_votes(limit=30, use_demo=use_demo)
+        if not recent:
+            st.caption("No votes yet.")
+            return
 
-totals = [i["total"] for i in items]
+        rows_html = ""
+        for v in recent:
+            icon = _VOTE_ICON.get(v["vote"], "❓")
+            color = _VOTE_COLOR.get(v["vote"], "#ccc")
+            title = v["item_title"][:35] + ("…" if len(v["item_title"]) > 35 else "")
+            username = v["username"][:12]
+            rows_html += f"""
+            <div style="
+                display:flex; align-items:center; gap:8px;
+                padding:6px 8px; margin-bottom:4px;
+                border-left: 3px solid {color};
+                background: rgba(255,255,255,0.03);
+                border-radius: 4px;
+                font-size: 0.78rem;
+                animation: fadeIn 0.4s ease;
+            ">
+                <span style="font-size:1.1rem">{icon}</span>
+                <div>
+                    <div style="font-weight:600; color:#eee">{username}</div>
+                    <div style="color:#aaa">{title}</div>
+                </div>
+            </div>
+            """
 
-fig_engagement = go.Figure()
-fig_engagement.add_trace(go.Bar(
-    name="For",
-    y=titles,
-    x=[i["for"] for i in items],
-    orientation="h",
-    marker_color="#2ecc71",
-    text=_pct_labels([i["for"] for i in items], totals),
-    textposition="inside",
-    insidetextanchor="middle",
-    textfont=dict(color="white", size=12),
-))
-fig_engagement.add_trace(go.Bar(
-    name="Against",
-    y=titles,
-    x=[i["against"] for i in items],
-    orientation="h",
-    marker_color="#e74c3c",
-    text=_pct_labels([i["against"] for i in items], totals),
-    textposition="inside",
-    insidetextanchor="middle",
-    textfont=dict(color="white", size=12),
-))
-fig_engagement.add_trace(go.Bar(
-    name="Abstain",
-    y=titles,
-    x=[i["abstain"] for i in items],
-    orientation="h",
-    marker_color="#95a5a6",
-    text=_pct_labels([i["abstain"] for i in items], totals),
-    textposition="inside",
-    insidetextanchor="middle",
-    textfont=dict(color="white", size=12),
-))
-fig_engagement.update_layout(
-    barmode="stack",
-    height=max(300, len(items) * 50),
-    margin=dict(l=20, r=20, t=20, b=20),
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    xaxis_title="Votes",
-    yaxis=dict(autorange="reversed"),
-)
-st.plotly_chart(fig_engagement, use_container_width=True)
-
-st.markdown("---")
-
-# ---------------------------------------------------------------------------
-# Per-item detail cards
-# ---------------------------------------------------------------------------
-st.subheader("Item Breakdown")
-
-for item in items:
-    total = item["total"]
-    pct_for = item["for"] / total * 100 if total else 0
-    pct_against = item["against"] / total * 100 if total else 0
-    pct_abstain = item["abstain"] / total * 100 if total else 0
-
-    # Flag contentious items (within 10% of each other, for vs against)
-    spread = abs(pct_for - pct_against)
-    is_contentious = spread < 10 and total >= 5
-    label = " 🔥 Contentious" if is_contentious else ""
-
-    with st.expander(f"**{item['item_title'][:80]}**{label} — {total} votes", expanded=False):
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Votes", total)
-        c2.metric("👍 For", f"{item['for']} ({pct_for:.0f}%)")
-        c3.metric("👎 Against", f"{item['against']} ({pct_against:.0f}%)")
-        c4.metric("🤷 Abstain", f"{item['abstain']} ({pct_abstain:.0f}%)")
-
-        # Donut chart
-        fig_donut = go.Figure(data=[go.Pie(
-            labels=["For", "Against", "Abstain"],
-            values=[item["for"], item["against"], item["abstain"]],
-            hole=0.55,
-            marker_colors=["#2ecc71", "#e74c3c", "#95a5a6"],
-            textinfo="label+percent",
-        )])
-        fig_donut.update_layout(
-            margin=dict(l=20, r=20, t=20, b=20),
-            height=280,
-            showlegend=False,
+        st.markdown(
+            f"""
+            <style>
+            @keyframes fadeIn {{
+                from {{ opacity:0; transform:translateY(-4px); }}
+                to {{ opacity:1; transform:translateY(0); }}
+            }}
+            .feed-container {{ max-height: 600px; overflow-y: auto; }}
+            </style>
+            <div class="feed-container">{rows_html}</div>
+            """,
+            unsafe_allow_html=True,
         )
-        st.plotly_chart(fig_donut, use_container_width=True)
 
-        if is_contentious:
-            st.warning(
-                "Voter opinion is closely divided on this item. "
-                "Consider further public consultation."
+    live_vote_feed()
+
+with main_col:
+    # ---------------------------------------------------------------------------
+    # Engagement overview — horizontal bar chart
+    # ---------------------------------------------------------------------------
+    st.subheader("Engagement by Agenda Item")
+
+    titles = [i["item_title"][:60] + ("…" if len(i["item_title"]) > 60 else "") for i in items]
+
+    def _pct_labels(counts: list[int], totals: list[int]) -> list[str]:
+        return [f"{c / t * 100:.0f}%" if t else "" for c, t in zip(counts, totals)]
+
+    totals = [i["total"] for i in items]
+
+    fig_engagement = go.Figure()
+    fig_engagement.add_trace(go.Bar(
+        name="For",
+        y=titles,
+        x=[i["for"] for i in items],
+        orientation="h",
+        marker_color="#2ecc71",
+        text=_pct_labels([i["for"] for i in items], totals),
+        textposition="inside",
+        insidetextanchor="middle",
+        textfont=dict(color="white", size=12),
+    ))
+    fig_engagement.add_trace(go.Bar(
+        name="Against",
+        y=titles,
+        x=[i["against"] for i in items],
+        orientation="h",
+        marker_color="#e74c3c",
+        text=_pct_labels([i["against"] for i in items], totals),
+        textposition="inside",
+        insidetextanchor="middle",
+        textfont=dict(color="white", size=12),
+    ))
+    fig_engagement.add_trace(go.Bar(
+        name="Abstain",
+        y=titles,
+        x=[i["abstain"] for i in items],
+        orientation="h",
+        marker_color="#95a5a6",
+        text=_pct_labels([i["abstain"] for i in items], totals),
+        textposition="inside",
+        insidetextanchor="middle",
+        textfont=dict(color="white", size=12),
+    ))
+    fig_engagement.update_layout(
+        barmode="stack",
+        height=max(300, len(items) * 50),
+        margin=dict(l=20, r=20, t=20, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        xaxis_title="Votes",
+        yaxis=dict(autorange="reversed"),
+    )
+    st.plotly_chart(fig_engagement, use_container_width=True)
+
+    st.markdown("---")
+
+    # ---------------------------------------------------------------------------
+    # Per-item detail cards
+    # ---------------------------------------------------------------------------
+    st.subheader("Item Breakdown")
+
+    for item in items:
+        total = item["total"]
+        pct_for = item["for"] / total * 100 if total else 0
+        pct_against = item["against"] / total * 100 if total else 0
+        pct_abstain = item["abstain"] / total * 100 if total else 0
+
+        # Flag contentious items (within 10% of each other, for vs against)
+        spread = abs(pct_for - pct_against)
+        is_contentious = spread < 10 and total >= 5
+        label = " 🔥 Contentious" if is_contentious else ""
+
+        with st.expander(f"**{item['item_title'][:80]}**{label} — {total} votes", expanded=False):
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Total Votes", total)
+            c2.metric("👍 For", f"{item['for']} ({pct_for:.0f}%)")
+            c3.metric("👎 Against", f"{item['against']} ({pct_against:.0f}%)")
+            c4.metric("🤷 Abstain", f"{item['abstain']} ({pct_abstain:.0f}%)")
+
+            # Donut chart
+            fig_donut = go.Figure(data=[go.Pie(
+                labels=["For", "Against", "Abstain"],
+                values=[item["for"], item["against"], item["abstain"]],
+                hole=0.55,
+                marker_colors=["#2ecc71", "#e74c3c", "#95a5a6"],
+                textinfo="label+percent",
+            )])
+            fig_donut.update_layout(
+                margin=dict(l=20, r=20, t=20, b=20),
+                height=280,
+                showlegend=False,
             )
+            st.plotly_chart(fig_donut, use_container_width=True)
+
+            if is_contentious:
+                st.warning(
+                    "Voter opinion is closely divided on this item. "
+                    "Consider further public consultation."
+                )

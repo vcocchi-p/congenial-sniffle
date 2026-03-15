@@ -227,3 +227,23 @@ def get_user_votes(username: str) -> dict[str, str]:
     ).fetchall()
     conn.close()
     return {row["item_key"]: row["vote"] for row in rows}
+
+
+def get_recent_votes(limit: int = 30, use_demo: bool = False) -> list[dict]:
+    """Return the most recent votes cast, newest first.
+
+    Returns list of dicts with keys: username, item_key, item_title, vote, submitted_at.
+    """
+    table = _votes_table(use_demo)
+    conn = _connect()
+    rows = conn.execute(
+        f"""
+        SELECT username, item_key, item_title, vote, submitted_at
+        FROM {table}
+        ORDER BY submitted_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
