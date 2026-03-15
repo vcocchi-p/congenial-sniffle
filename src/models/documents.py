@@ -13,6 +13,43 @@ class DocumentType(str, Enum):
     VOTING_RECORD = "voting_record"
 
 
+class Committee(BaseModel):
+    """A Westminster Council committee."""
+
+    id: int  # CId parameter on the site
+    name: str
+    url: str
+
+
+class Meeting(BaseModel):
+    """A single committee meeting."""
+
+    committee_id: int
+    committee_name: str
+    meeting_id: int  # MId parameter on the site
+    date: str  # e.g. "31 Mar 2025 6.30 pm"
+    url: str
+
+
+class MeetingDocument(BaseModel):
+    """A downloadable document from a meeting (PDF agenda, minutes, etc.)."""
+
+    meeting_id: int
+    title: str
+    doc_type: DocumentType
+    url: str
+
+
+class AgendaItem(BaseModel):
+    """A single agenda item from a meeting."""
+
+    meeting_id: int
+    item_number: str
+    title: str
+    decision_url: str | None = None
+    decision_summary: str | None = None
+
+
 class CouncilDocument(BaseModel):
     """A raw document fetched from Westminster Council."""
 
@@ -22,6 +59,7 @@ class CouncilDocument(BaseModel):
     fetched_at: datetime
     raw_content: str
     committee: str | None = None
+    meeting_id: int | None = None
 
 
 class VoterSummary(BaseModel):
